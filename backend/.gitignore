@@ -1,0 +1,15 @@
+# Ignorar ambiente virtual
+venv/
+env/
+
+# Ignorar ficheiros compilados de Python
+__pycache__/
+*.pyc
+
+# Ignorar ficheiros de sistema
+.DS_Store
+
+# Ignorar ficheiros com segredos ou testes locais
+.env
+teste.py
+rules_local.yaml

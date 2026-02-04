@@ -1,0 +1,24 @@
+rules:
+  - id: "aws-access-key"
+    name: "Chave de Acesso AWS"
+    regex: "(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}"
+    severity: "CRITICO"
+    description: "Chaves da AWS permitem acesso total à infraestrutura cloud."
+
+  - id: "private-key"
+    name: "Chave Privada (RSA/DSA)"
+    regex: "-----BEGIN (RSA|DSA|EC|PGP|OPENSSH) PRIVATE KEY-----"
+    severity: "CRITICO"
+    description: "Chaves privadas nunca devem ser commitadas no repositório."
+
+  - id: "generic-secret"
+    name: "Password ou Token Genérico"
+    regex: "(password|secret|passwd|api_key|token)\\s*=\\s*['\"][a-zA-Z0-9@#$%^&+=]{3,}['\"]"
+    severity: "ALTO"
+    description: "Variáveis de ambiente hardcoded no código."
+
+  - id: "stripe-key"
+    name: "Chave Stripe (Test/Live)"
+    regex: "(sk_live_[0-9a-zA-Z]{24}|sk_test_[0-9a-zA-Z]{24})"
+    severity: "ALTO"
+    description: "Chaves de pagamento expostas."

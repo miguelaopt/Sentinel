@@ -1,0 +1,24 @@
+name: 'SentinelScan Security'
+description: 'Verifica automaticamente vulnerabilidades e segredos expostos no código.'
+author: 'Teu Nome'
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  target-dir:
+    description: 'A pasta que deve ser analisada'
+    required: false
+    default: '.'
+  output-file:
+    description: 'Nome do ficheiro de relatório'
+    required: false
+    default: 'report.json'
+
+runs:
+  using: 'docker'
+  image: 'Dockerfile'
+  args:
+    - ${{ inputs.target-dir }}
+    - '--output'
+    - ${{ inputs.output-file }}

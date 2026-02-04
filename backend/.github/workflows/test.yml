@@ -1,0 +1,34 @@
+name: Test SentinelScan
+
+on: [push, pull_request]
+
+jobs:
+  security-check:
+    runs-on: ubuntu-latest
+    name: Running Sentinel Scanner
+    
+    steps:
+      # 1. ATUALIZADO: checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Corre a TUA Action
+      - name: Run SentinelScan
+        id: scan
+        uses: ./ 
+        with:
+          target-dir: '.'
+          output-file: 'security_report.json'
+
+      # 3. Mostra o ficheiro gerado
+      - name: Show Report
+        if: always() 
+        run: cat security_report.json
+
+      # 4. ATUALIZADO: upload-artifact@v4
+      - name: Upload Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report
+          path: security_report.json
