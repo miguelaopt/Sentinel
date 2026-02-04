@@ -14,3 +14,10 @@ frontend/out/
 # --- Sistema ---
 .DS_Store
 .vscode/
+
+# Segredos e Ambientes
+.env
+.env.local
+.env.*
+backend/.env
+frontend/.env.local
