@@ -2,6 +2,9 @@ import json
 import os
 from datetime import datetime
 from supabase import create_client, Client
+from dotenv import load_dotenv 
+
+load_dotenv()
 
 def generate_json_report(issues, output_file="report.json"):
     # 1. Preparar os dados

@@ -8,27 +8,28 @@ jobs:
     name: Running Sentinel Scanner
     
     steps:
-      # 1. ATUALIZADO: checkout@v4
+      # 1. Baixar o código
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. Corre a TUA Action
+      # 2. Correr a TUA Action (Aponta para a pasta backend)
       - name: Run SentinelScan
         id: scan
-        uses: ./ 
+        uses: ./backend  # <--- MUDANÇA CRUCIAL AQUI
         with:
-          target-dir: '.'
+          target-dir: '.' # Analisa a raiz (backend + frontend)
           output-file: 'security_report.json'
         env:
+          # Injetar as chaves secretas para enviar para a BD
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
 
-      # 3. Mostra o ficheiro gerado
+      # 3. Mostrar o relatório no log
       - name: Show Report
         if: always() 
         run: cat security_report.json
 
-      # 4. ATUALIZADO: upload-artifact@v4
+      # 4. Guardar o relatório para download
       - name: Upload Report
         if: always()
         uses: actions/upload-artifact@v4

@@ -1,10 +1,67 @@
 {
-    "scan_timestamp": "2026-02-04T19:42:32.770677",
-    "total_issues": 0,
-    "issues": [],
+    "scan_timestamp": "2026-02-04T19:58:49.756647",
+    "total_issues": 7,
+    "issues": [
+        {
+            "file": ".\\report.json",
+            "line": 11,
+            "rule_id": "stripe-key",
+            "name": "Chave Stripe (Test/Live)",
+            "severity": "ALTO",
+            "snippet": "\"snippet\": \"stripe_key = \\\"sk_test_4eC39HqLyjWDarjtT1zdp7dc\\"
+        },
+        {
+            "file": ".\\report.json",
+            "line": 19,
+            "rule_id": "aws-access-key",
+            "name": "Chave de Acesso AWS",
+            "severity": "CRITICO",
+            "snippet": "\"snippet\": \"aws_secret = \\\"AKIAIOSFODNN7EXAMPLE\\\"\""
+        },
+        {
+            "file": ".\\report.json",
+            "line": 27,
+            "rule_id": "aws-access-key",
+            "name": "Chave de Acesso AWS",
+            "severity": "CRITICO",
+            "snippet": "\"snippet\": \"aws_secret = \\\"AKIAIOSFODNN7EXAMPLE\\\"\""
+        },
+        {
+            "file": ".\\teste_segredos.py",
+            "line": 2,
+            "rule_id": "stripe-key",
+            "name": "Chave Stripe (Test/Live)",
+            "severity": "ALTO",
+            "snippet": "stripe_key = \"sk_test_4eC39HqLyjWDarjtT1zdp7dc\""
+        },
+        {
+            "file": ".\\teste_segredos.py",
+            "line": 3,
+            "rule_id": "aws-access-key",
+            "name": "Chave de Acesso AWS",
+            "severity": "CRITICO",
+            "snippet": "aws_secret = \"AKIAIOSFODNN7EXAMPLE\""
+        },
+        {
+            "file": ".\\teste_segredos.py",
+            "line": 3,
+            "rule_id": "generic-secret",
+            "name": "Password ou Token GenÃ©rico",
+            "severity": "ALTO",
+            "snippet": "aws_secret = \"AKIAIOSFODNN7EXAMPLE\""
+        },
+        {
+            "file": ".\\teste_segredos.py",
+            "line": 4,
+            "rule_id": "generic-secret",
+            "name": "Password ou Token GenÃ©rico",
+            "severity": "ALTO",
+            "snippet": "password = \"123456password\""
+        }
+    ],
     "summary": {
-        "critical": 0,
-        "high": 0,
+        "critical": 3,
+        "high": 4,
         "medium": 0
     }
 }
