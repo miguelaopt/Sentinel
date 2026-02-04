@@ -19,6 +19,9 @@ jobs:
         with:
           target-dir: '.'
           output-file: 'security_report.json'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
 
       # 3. Mostra o ficheiro gerado
       - name: Show Report
