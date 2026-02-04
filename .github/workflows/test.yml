@@ -8,28 +8,25 @@ jobs:
     name: Running Sentinel Scanner
     
     steps:
-      # 1. Baixar o código
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. Correr a TUA Action (Aponta para a pasta backend)
       - name: Run SentinelScan
         id: scan
-        uses: ./backend  # <--- MUDANÇA CRUCIAL AQUI
+        uses: ./backend
         with:
-          target-dir: '.' # Analisa a raiz (backend + frontend)
-          output-file: 'security_report.json'
+          target-dir: '.' 
+          # MUDANÇA AQUI: Usamos o caminho absoluto do workspace
+          output-file: ${{ github.workspace }}/security_report.json
         env:
-          # Injetar as chaves secretas para enviar para a BD
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
 
-      # 3. Mostrar o relatório no log
       - name: Show Report
         if: always() 
+        # O ficheiro agora vai aparecer na raiz, onde o cat espera
         run: cat security_report.json
 
-      # 4. Guardar o relatório para download
       - name: Upload Report
         if: always()
         uses: actions/upload-artifact@v4
