@@ -60,7 +60,8 @@ class SASTScanner:
 
         # --- CORREÇÃO AQUI ---
         # Adicionei 'report.json' e 'notifications.py' à lista negra
-        if file_name in ['security_report.json', 'report.json', 'package-lock.json', 'yarn.lock', 'notifications.py']: return []
+        if file_name in ['security_report.json', 'report.json', 'package-lock.json', 'yarn.lock', 'notifications.py', 'page.js']: 
+            return []
         
         # Ignorar imagens e binários
         if file_path.endswith(('.png', '.jpg', '.svg', '.exe', '.dll', '.pyc')): return []
