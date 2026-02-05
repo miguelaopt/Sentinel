@@ -11,21 +11,27 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # 1. NOVO PASSO: Criar o ficheiro vazio com permissões totais
+      # Isto resolve o problema do Docker não conseguir escrever no disco
+      - name: Pre-create report file
+        run: |
+          touch security_report.json
+          chmod 777 security_report.json
+
+      # 2. Correr o Scanner (agora apontamos para o ficheiro que já existe)
       - name: Run SentinelScan
         id: scan
         uses: ./backend
         with:
-          # 1. Dizemos ao scanner para analisar a pasta ONDE O GITHUB MONTOU O CÓDIGO
-          target-dir: '/github/workspace'
-          # 2. Dizemos para gravar o relatório NA MESMA PASTA MONTADA
-          output-file: '/github/workspace/security_report.json'
+          target-dir: '.' 
+          output-file: 'security_report.json' # Caminho relativo simples
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
 
+      # 3. Mostrar o ficheiro
       - name: Show Report
         if: always() 
-        # Como gravámos na pasta workspace (/github/workspace), o ficheiro aparece aqui na raiz
         run: cat security_report.json
 
       - name: Upload Report
