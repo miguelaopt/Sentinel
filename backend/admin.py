@@ -170,20 +170,41 @@ def remove_organization():
 
 def add_user():
     print_banner()
-    console.print("[green]ADD USER[/green]")
-    list_organizations(pause=False)
-    org_id = Prompt.ask("ID da Org")
+    console.print("[bold green]>>> ADICIONAR USER[/bold green]")
+    
+    console.print("Selecione a Organização (Opcional - Enter para criar nova automática):")
+    # Nota: Simplifiquei aqui. Se deres Enter, o trigger cria uma org nova.
+    # Se quiseres forçar uma org existente, terias de passar o ID no metadata também,
+    # mas vamos deixar o trigger gerir a org para simplificar.
+    
     email = Prompt.ask("Email")
-    pwd = Prompt.ask("Password", password=True)
-    name = Prompt.ask("Nome")
-    role = Prompt.ask("Role", choices=["Viewer", "Admin"])
-    if sudo_check():
-        try:
-            res = supabase.auth.admin.create_user({"email": email, "password": pwd, "email_confirm": True, "user_metadata": {"full_name": name}})
-            if res.user: supabase.table("profiles").update({"role": role, "org_id": org_id, "full_name": name}).eq("id", res.user.id).execute()
-            console.print("[green]User Criado![/green]")
-        except Exception as e: console.print(f"[red]{e}[/red]")
+    password = Prompt.ask("Password", password=True)
+    name = Prompt.ask("Nome Completo")
+    role = Prompt.ask("Cargo", choices=["Viewer", "Developer", "Admin"], default="Viewer")
+
+    if not sudo_check(): return
+
+    try:
+        console.print("[dim]Criando utilizador...[/dim]")
+        
+        # --- A CORREÇÃO ESTÁ AQUI ---
+        # Passamos o role dentro de user_metadata
+        auth_res = supabase.auth.admin.create_user({
+            "email": email,
+            "password": password,
+            "email_confirm": True,
+            "user_metadata": {
+                "full_name": name,
+                "role": role  # <--- O Trigger vai ler isto!
+            }
+        })
+        
+        console.print(f"[bold green]✅ Utilizador {email} criado com sucesso como {role}![/bold green]")
         time.sleep(2)
+        
+    except Exception as e:
+        console.print(f"[bold red]Erro ao criar user: {e}[/bold red]")
+        time.sleep(4)
 
 def remove_user():
     print_banner()

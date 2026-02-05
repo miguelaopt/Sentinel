@@ -3,7 +3,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import { 
-  PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, 
+  PieChart, Pie, Cell, ResponsiveContainer, Tooltip, // <--- IMPORT CORRIGIDO
   AreaChart, Area, XAxis, YAxis, CartesianGrid, BarChart, Bar, Legend
 } from 'recharts';
 import { 
@@ -160,7 +160,7 @@ export default function Home() {
   // Dados
   const [latestScan, setLatestScan] = useState(null);
   const [historyData, setHistoryData] = useState([]);
-  const [severityData, setSeverityData] = useState([]); // NOVO
+  const [severityData, setSeverityData] = useState([]); 
   const [users, setUsers] = useState([]);
   const [apiKeys, setApiKeys] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
@@ -174,7 +174,10 @@ export default function Home() {
   const [ignoredIssues, setIgnoredIssues] = useState([]);
 
   // --- PERMISSÃO ---
-  const isAdmin = userProfile?.role === 'Admin';
+  // --- PERMISSÃO INTELIGENTE ---
+  // Normaliza para maiúsculas e remove espaços para evitar erros como "admin " ou "Admin"
+  const userRole = userProfile?.role ? userProfile.role.trim().toUpperCase() : '';
+  const isAdmin = userRole === 'ADMIN';
 
   const theme = darkMode ? {
       bg: 'bg-[#05020a]', text: 'text-slate-100', card: 'bg-[#150a24]', border: 'border-[#361a5c]', 
@@ -205,27 +208,32 @@ export default function Home() {
         const { data: { user }, error: authError } = await supabase.auth.getUser();
         if (authError || !user) { router.push('/login'); return; }
         
-        // Tenta buscar o perfil
-        let { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+        // --- MUDANÇA: Usar RPC (Função Segura) em vez de Select ---
+        // Isto garante que recebemos o ROLE real, sem bloqueios de RLS
+        const { data: profileData, error: profileError } = await supabase.rpc('get_my_profile');
         
-        // --- CORREÇÃO AQUI (Fallback de Segurança) ---
-        // Se o profile for null, criamos um objeto temporário seguro
-        const safeProfile = profile || { 
+        if (profileError) console.error("Erro RPC:", profileError);
+
+        // Fallback robusto
+        const safeProfile = profileData || { 
             id: user.id, 
             email: user.email, 
-            full_name: user.user_metadata?.full_name || 'Utilizador', 
+            full_name: user.user_metadata?.full_name || 'Agente', 
             role: 'Viewer',
-            settings: { email: false, slack: false, weekly: false },
-            slack_webhook: ''
+            settings: { email: false, slack: false }, 
+            slack_webhook: '',
+            org_id: null
         };
+
+        // DEBUG: Mostra exatamente o que veio da base de dados
+        console.log("🔍 DADOS BRUTOS DA DB:", profileData);
+        console.log("👤 PERFIL PROCESSADO:", safeProfile);
 
         setUserProfile(safeProfile);
         
-        // Agora usamos o safeProfile, que nunca é null
         if (safeProfile.settings) setNotifications(safeProfile.settings);
         if (safeProfile.slack_webhook) setSlackWebhook(safeProfile.slack_webhook);
 
-        // Tenta carregar organização
         if (safeProfile.org_id) {
             const { data: org } = await supabase.from('organizations').select('*').eq('id', safeProfile.org_id).single();
             if (org) {
@@ -233,25 +241,27 @@ export default function Home() {
                 if (org.policies) setPolicies(org.policies);
             }
         }
-        // ---------------------------------------------
 
         const { data: scans } = await supabase.from('scans').select('created_at, report').order('created_at', { ascending: true }).limit(30);
         if (scans && scans.length > 0) {
             const report = scans[scans.length - 1].report;
             setLatestScan(report);
             setHistoryData(scans.map(s => ({ date: format(new Date(s.created_at), 'dd/MM'), total: s.report.total_issues, critical: s.report.summary.critical })));
-            
             setSeverityData([
                 { name: 'Crítico', count: report.summary.critical, fill: '#EF4444' },
                 { name: 'Alto', count: report.summary.high, fill: '#F59E0B' },
                 { name: 'Médio', count: report.summary.medium, fill: '#3B82F6' }
             ]);
         }
-        await refreshData(safeProfile.id); // Usa o ID seguro
+        
+        await refreshData(safeProfile.id);
         fetch(API_URL).then(res => setApiStatus(res.ok ? 'Operational' : 'Error')).catch(() => setApiStatus('Waking up...'));
+
       } catch (e) { console.error(e); } finally { setLoading(false); }
     }
     init();
+    
+    // ... event listeners ...
     function handleClickOutside(event) { if (notifRef.current && !notifRef.current.contains(event.target)) setIsNotifOpen(false); }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
@@ -263,19 +273,17 @@ export default function Home() {
   const handleTogglePolicy = async (key) => {
       if (!isAdmin) { showToast('Apenas Admins podem alterar políticas.', 'error'); return; }
       if (!orgData?.id) return;
-      
       const newPolicies = { ...policies, [key]: !policies[key] };
       setPolicies(newPolicies);
       const { error } = await supabase.from('organizations').update({ policies: newPolicies }).eq('id', orgData.id);
-      
-      if (error) { setPolicies(policies); showToast('Erro de permissão (RLS).', 'error'); } 
+      if (error) { setPolicies(policies); showToast('Erro de permissão.', 'error'); } 
       else { logAction('POLICY_UPDATE', `Admin alterou regra: ${key}`); }
   };
 
   const handleUpdateOrgName = async (newName) => {
       if (!isAdmin) return;
       const { error } = await supabase.from('organizations').update({ name: newName }).eq('id', orgData.id);
-      if (!error) { setOrgData({...orgData, name: newName}); showToast('Nome da empresa atualizado.'); }
+      if (!error) { setOrgData({...orgData, name: newName}); showToast('Nome atualizado.'); }
   };
 
   const handleToggleNotification = async (key) => {
@@ -320,8 +328,6 @@ export default function Home() {
   const emptyState = !latestScan;
   const isCritical = latestScan?.summary.critical > 0;
   const filteredIssues = latestScan?.issues.filter(i => !ignoredIssues.includes(i.name)).filter(i => (filterSeverity === 'ALL' || i.severity === filterSeverity) && (i.name.toLowerCase().includes(searchTerm.toLowerCase()) || i.file.toLowerCase().includes(searchTerm.toLowerCase()))) || [];
-  
-  // Score de Segurança (Calculado)
   const securityScore = latestScan ? Math.max(0, 100 - (latestScan.summary.critical * 20) - (latestScan.summary.high * 10)) : 100;
 
   return (
@@ -387,7 +393,7 @@ export default function Home() {
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                <KPICard title="Vulnerabilidades" value={latestScan.total_issues} icon={<AlertTriangle className="text-white"/>} color="bg-indigo-500" theme={theme} />
                <KPICard title="Risco Crítico" value={latestScan.summary.critical} icon={<Shield className="text-white"/>} color="bg-red-500" theme={theme} />
-               <KPICard title="Security Score" value={`${securityScore}%`} icon={<ShieldCheck className="text-white"/>} color={securityScore > 80 ? "bg-emerald-500" : "bg-orange-500"} theme={theme} />
+               <KPICard title="Score" value={`${securityScore}%`} icon={<ShieldCheck className="text-white"/>} color={securityScore > 80 ? "bg-emerald-500" : "bg-orange-500"} theme={theme} />
                <KPICard title="Ficheiros" value={latestScan.total_issues * 4} icon={<List className="text-white"/>} color="bg-blue-500" theme={theme} />
             </div>
             
@@ -395,7 +401,7 @@ export default function Home() {
                 {/* TREND CHART */}
                 <div className={`lg:col-span-2 p-6 rounded-2xl shadow-sm border ${theme.card} ${theme.border}`}>
                    <h3 className="text-lg font-bold mb-6 flex gap-2 items-center"><TrendingUp className="text-indigo-500" size={20}/> Tendência de Segurança</h3>
-                   <div className="h-[280px]"><ResponsiveContainer><AreaChart data={historyData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? '#333' : '#f1f5f9'}/><XAxis dataKey="date" tick={{fontSize: 11, fill: '#888'}} axisLine={false} tickLine={false}/><YAxis tick={{fontSize: 11, fill: '#888'}} axisLine={false} tickLine={false}/><RechartsTooltip contentStyle={{borderRadius: '8px', border: 'none', backgroundColor: darkMode ? '#1e1035' : '#fff', color: darkMode ? '#fff' : '#000'}}/><Area type="monotone" dataKey="total" stroke="#94a3b8" fill="transparent" strokeWidth={2}/><Area type="monotone" dataKey="critical" stroke="#EF4444" fill="#EF4444" fillOpacity={0.1} strokeWidth={2}/></AreaChart></ResponsiveContainer></div>
+                   <div className="h-[280px]"><ResponsiveContainer><AreaChart data={historyData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? '#333' : '#f1f5f9'}/><XAxis dataKey="date" tick={{fontSize: 11, fill: '#888'}} axisLine={false} tickLine={false}/><YAxis tick={{fontSize: 11, fill: '#888'}} axisLine={false} tickLine={false}/><Tooltip contentStyle={{borderRadius: '8px', border: 'none', backgroundColor: darkMode ? '#1e1035' : '#fff', color: darkMode ? '#fff' : '#000'}}/><Area type="monotone" dataKey="total" stroke="#94a3b8" fill="transparent" strokeWidth={2}/><Area type="monotone" dataKey="critical" stroke="#EF4444" fill="#EF4444" fillOpacity={0.1} strokeWidth={2}/></AreaChart></ResponsiveContainer></div>
                 </div>
                 
                 {/* SEVERITY BREAKDOWN (NOVO) */}
@@ -405,6 +411,7 @@ export default function Home() {
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart data={severityData}>
                                 <XAxis dataKey="name" tick={{fontSize: 12, fill: '#888'}} axisLine={false} tickLine={false}/>
+                                <Tooltip cursor={{fill: 'transparent'}} contentStyle={{borderRadius: '8px', border: 'none', backgroundColor: darkMode ? '#1e1035' : '#fff', color: darkMode ? '#fff' : '#000'}}/>
                                 <Bar dataKey="count" radius={[4, 4, 0, 0]} barSize={40}>
                                     {severityData.map((entry, index) => (<Cell key={`cell-${index}`} fill={entry.fill} />))}
                                 </Bar>
@@ -445,7 +452,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* ... Resto das Tabs (Vulnerabilities, Compliance, etc. - IGUAL AO ANTERIOR) ... */}
+        {/* ... OUTRAS TABS ... */}
         {activeTab === 'compliance' && (
             <div className="space-y-6 animate-in fade-in">
                 <div className={`p-8 rounded-2xl shadow-sm border flex flex-col md:flex-row items-center justify-between gap-6 ${theme.card} ${theme.border}`}>
@@ -524,7 +531,7 @@ export default function Home() {
         {activeTab === 'users' && (
            <div className="space-y-6 animate-in fade-in">
               <div className="flex justify-between items-center"><h2 className="text-lg font-bold">Equipa</h2><button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-indigo-700 shadow-md text-sm transition-transform active:scale-95"><Plus size={16}/> Adicionar</button></div>
-              <div className={`rounded-2xl shadow-sm border overflow-hidden ${theme.card} ${theme.border}`}><table className="w-full text-left"><thead className={`text-[10px] uppercase border-b ${darkMode ? 'bg-white/5 text-slate-400 border-white/10' : 'bg-slate-50 text-slate-500 border-slate-100'}`}><tr><th className="p-5">Nome</th><th className="p-5">Cargo</th><th className="p-5 text-right">Ações</th></tr></thead><tbody className={`divide-y text-sm ${darkMode ? 'divide-white/5' : 'divide-slate-100'}`}>{users.map(u => (<tr key={u.id} className={theme.hover}><td className="p-5"><div><p className="font-bold">{u.full_name}</p><p className={`text-xs ${theme.muted}`}>{u.email}</p></div></td><td className="p-5"><span className={`border px-2 py-1 rounded text-xs font-bold ${darkMode ? 'bg-white/5 border-white/10 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-600'}`}>{u.role}</span></td><td className="p-5 text-right"><button onClick={() => handleDeleteUser(u.id, u.email)} className={`transition-colors p-2 rounded-lg ${darkMode ? 'text-slate-500 hover:bg-red-900/20 hover:text-red-400' : 'text-slate-400 hover:bg-red-50 hover:text-red-500'}`}><Trash2 size={16}/></button></td></tr>))}</tbody></table></div>
+              <div className={`rounded-2xl shadow-sm border overflow-hidden ${theme.card} ${theme.border}`}><table className="w-full text-left"><thead className={`text-[10px] uppercase border-b ${darkMode ? 'bg-white/5 text-slate-400 border-white/10' : 'bg-slate-50 text-slate-500 border-slate-100'}`}><tr><th className="p-5">Nome</th><th className="p-5">Email</th><th className="p-5">Cargo</th><th className="p-5 text-right">Ações</th></tr></thead><tbody className={`divide-y text-sm ${darkMode ? 'divide-white/5' : 'divide-slate-100'}`}>{users.map(u => (<tr key={u.id} className={theme.hover}><td className="p-5"><div><p className="font-bold">{u.full_name}</p><p className={`text-xs ${theme.muted}`}>{u.email}</p></div></td><td className="p-5"><span className={`border px-2 py-1 rounded text-xs font-bold ${darkMode ? 'bg-white/5 border-white/10 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-600'}`}>{u.role}</span></td><td className="p-5 text-right">{isAdmin && u.id !== userProfile.id && <button onClick={() => handleDeleteUser(u.id, u.email)} className={`transition-colors p-2 rounded-lg ${darkMode ? 'text-slate-500 hover:bg-red-900/20 hover:text-red-400' : 'text-slate-400 hover:bg-red-50 hover:text-red-500'}`}><Trash2 size={16}/></button>}</td></tr>))}</tbody></table></div>
            </div>
         )}
 
