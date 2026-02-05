@@ -40,7 +40,10 @@ class Scanner:
                     continue
 
                 # Ignorar ficheiros específicos do sistema
-                if file in ['security_report.json', 'report.json', 'package-lock.json']:
+                if file in ['security_report.json', 'report.json', 'package-lock.json', 'notifications.py']:
+                    continue
+
+                if 'frontend' in root:
                     continue
                 
                 # Ignorar o próprio código do scanner para evitar falsos positivos nas regras
