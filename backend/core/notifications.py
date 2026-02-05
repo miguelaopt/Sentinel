@@ -32,7 +32,7 @@ def send_alert(issues):
 
     try:
         # ATENÇÃO: No plano grátis do Resend, só podes enviar para o TEU PRÓPRIO email
-        email_destino = os.environ.get("ALERT_EMAIL", "o_teu_email@gmail.com")
+        email_destino = os.environ.get("ALERT_EMAIL", "miguel.rf267@gmail.com")
         
         r = resend.Emails.send({
             "from": "onboarding@resend.dev",
