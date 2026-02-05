@@ -15,16 +15,17 @@ jobs:
         id: scan
         uses: ./backend
         with:
-          target-dir: '.' 
-          # MUDANÇA AQUI: Usamos o caminho absoluto do workspace
-          output-file: ${{ github.workspace }}/security_report.json
+          # 1. Dizemos ao scanner para analisar a pasta ONDE O GITHUB MONTOU O CÓDIGO
+          target-dir: '/github/workspace'
+          # 2. Dizemos para gravar o relatório NA MESMA PASTA MONTADA
+          output-file: '/github/workspace/security_report.json'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
 
       - name: Show Report
         if: always() 
-        # O ficheiro agora vai aparecer na raiz, onde o cat espera
+        # Como gravámos na pasta workspace (/github/workspace), o ficheiro aparece aqui na raiz
         run: cat security_report.json
 
       - name: Upload Report
