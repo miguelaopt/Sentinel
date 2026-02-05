@@ -1,18 +1,18 @@
 {
-    "scan_timestamp": "2026-02-05T13:57:48.230735",
+    "scan_timestamp": "2026-02-05T16:06:06.724904",
     "total_issues": 1,
     "issues": [
         {
-            "file": ".\\teste_sql.py",
-            "line": 2,
-            "name": "SQL Injection (String Concatenation)",
-            "severity": "CRITICO",
-            "snippet": "Detected unsafe query construction using '+' operator"
+            "file": ".\\Dockerfile",
+            "line": 1,
+            "name": "Docker: Running as Root",
+            "severity": "ALTO",
+            "snippet": "Missing USER instruction"
         }
     ],
     "summary": {
-        "critical": 1,
-        "high": 0,
+        "critical": 0,
+        "high": 1,
         "medium": 0
     }
 }

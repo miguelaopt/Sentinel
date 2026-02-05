@@ -3,6 +3,8 @@ import re
 import ast
 import json
 import concurrent.futures
+import boto3
+from botocore.exceptions import ClientError
 
 class SASTScanner:
     def __init__(self):
@@ -10,6 +12,33 @@ class SASTScanner:
             {"id": "AWS_KEY", "name": "AWS Access Key", "pattern": r"(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}", "severity": "CRITICO"},
             {"id": "STRIPE_KEY", "name": "Stripe Secret Key", "pattern": r"sk_live_[0-9a-zA-Z]{24}", "severity": "CRITICO"},
         ]
+    # --- 1. CONTAINER SCANNING (DOCKER) ---
+    def check_docker(self, file_path, content):
+        issues = []
+        if file_path.endswith('Dockerfile'):
+            # Regra: Não usar tag 'latest' em produção
+            if 'FROM' in content and ':latest' in content:
+                issues.append({
+                    "file": file_path, "line": 1, "name": "Docker: Using 'latest' tag",
+                    "severity": "MEDIO", "snippet": "FROM ... :latest (Unstable)"
+                })
+            # Regra: Não correr como root
+            if 'USER' not in content:
+                issues.append({
+                    "file": file_path, "line": 1, "name": "Docker: Running as Root",
+                    "severity": "ALTO", "snippet": "Missing USER instruction"
+                })
+        return issues
+    
+    # --- 2. ACTIVE VALIDATION (VALIDAR SE A CHAVE É REAL) ---
+    def validate_aws_key(self, key_id, secret):
+        """Tenta ligar à AWS para ver se a chave funciona"""
+        try:
+            client = boto3.client('sts', aws_access_key_id=key_id, aws_secret_access_key=secret)
+            client.get_caller_identity()
+            return True # É UMA CHAVE REAL E PERIGOSA!
+        except:
+            return False # É falsa ou inativa
 
     def check_sca(self, file_path, content):
         """Verifica versões vulneráveis em package.json e requirements.txt"""
@@ -78,6 +107,28 @@ class SASTScanner:
             # SQL Check
             if file_path.endswith('.py'):
                 issues.extend(self.check_sql_injection(file_path, content))
+            
+            if file_path.endswith('Dockerfile'):
+             issues.extend(self.check_docker(file_path, content))
+            
+            for rule in self.regex_rules:
+                match = re.search(rule['pattern'], content)
+                if match:
+                    severity = rule['severity']
+                    extra_info = ""
+                
+                    # Se for AWS, vamos testar!
+                if rule['id'] == 'AWS_KEY':
+                    # Isto é simplificado, precisarias extrair o segredo também do código
+                    # Para o exemplo, vamos assumir que o risco aumenta
+                    extra_info = " (Potential Active Key)" 
+                
+                issues.append({
+                    "file": file_path, "line": 1, 
+                    "name": rule['name'] + extra_info,
+                    "severity": severity, 
+                    "snippet": match.group(0)
+                })
 
             # Regex Check
             lines = content.splitlines()

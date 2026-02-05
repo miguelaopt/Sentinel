@@ -8,6 +8,8 @@ from core.scanner import Scanner
 from pydantic import BaseModel
 import google.generativeai as genai
 from dotenv import load_dotenv
+import resend
+import requests
 
 load_dotenv()
 
@@ -31,7 +33,7 @@ model = None
 if GOOGLE_API_KEY:
     try:
         genai.configure(api_key=GOOGLE_API_KEY)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         print("✅ Gemini AI Configurado com sucesso.")
     except Exception as e:
         print(f"⚠️ Erro ao configurar Gemini: {e}")
@@ -42,10 +44,14 @@ class FixRequest(BaseModel):
 
 @app.get("/")
 def read_root():
-    return {"status": "Sentinel AI Core Online 🟢", "ai_engine": "Gemini 1.5 Flash"}
+    return {"status": "Sentinel AI Core Online 🟢", "ai_engine": "Gemini 2.5 Flash"}
 
 @app.post("/scan")
-async def scan_project(file: UploadFile = File(...)):
+async def scan_project(
+    file: UploadFile = File(...), 
+    email_alert: bool = False, # Recebido do frontend
+    slack_webhook: str = None  # Recebido do frontend
+):
     if not file.filename.endswith('.zip'):
         raise HTTPException(status_code=400, detail="Apenas ficheiros .zip são permitidos.")
 
@@ -62,6 +68,34 @@ async def scan_project(file: UploadFile = File(...)):
             raise HTTPException(status_code=400, detail="Ficheiro ZIP corrompido.")
 
         issues = scanner.scan_directory(extract_path)
+        critical_count = len([i for i in issues if i['severity'] == 'CRITICO'])
+
+        # --- 3. LÓGICA DE ALERTAS REAIS ---
+    if critical_count > 0:
+        
+        # Enviar Email (Resend)
+        if email_alert and os.environ.get("RESEND_API_KEY"):
+            try:
+                resend.api_key = os.environ.get("RESEND_API_KEY")
+                resend.Emails.send({
+                    "from": os.environ.get("FROM_EMAIL", "onboarding@resend.dev"),
+                    "to": "admin@empresa.com", # Num caso real, viria do user profile
+                    "subject": f"🚨 ALERTA SENTINEL: {critical_count} Falhas Críticas",
+                    "html": f"<strong>Atenção:</strong> O scan detetou {critical_count} vulnerabilidades críticas. Verifique o dashboard imediatamente."
+                })
+                print("📧 Email enviado.")
+            except Exception as e:
+                print(f"Erro Email: {e}")
+
+        # Enviar Slack
+        if slack_webhook:
+            try:
+                requests.post(slack_webhook, json={
+                    "text": f"🚨 *Sentinel Security Alert*\nCríticos detetados: {critical_count}\n<https://teu-app.vercel.app|Ver Dashboard>"
+                })
+                print("💬 Slack enviado.")
+            except Exception as e:
+                print(f"Erro Slack: {e}")
         
         summary = {
             "critical": len([i for i in issues if i['severity'] == 'CRITICO']),
