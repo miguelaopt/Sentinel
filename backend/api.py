@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware # <--- IMPORTANTE
 import shutil
 import os
