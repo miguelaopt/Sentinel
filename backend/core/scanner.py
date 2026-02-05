@@ -17,15 +17,34 @@ class Scanner:
     def scan_directory(self, target_dir):
         issues = []
         # Caminhos a ignorar para não ficar lento
-        ignore_dirs = {'.git', 'venv', '__pycache__', 'node_modules', '.next'}
+        # 1. Pastas a ignorar (Adicionei 'core' para ele não se analisar a si mesmo)
+        ignore_dirs = {
+            '.git', 'venv', 'env', '__pycache__', 
+            'node_modules', '.next', 'build', 'dist', '.vscode'
+        }
+
+        # 2. Extensões a ignorar (Adicionei .svg, .json e .md)
+        ignore_extensions = (
+            '.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg', '.json', '.md',
+            '.pyc', '.exe', '.dll', '.so', '.dylib', 
+            '.db', '.sqlite', '.lock'
+        )
+
+        print(f"DEBUG: A iniciar scan em: {target_dir}")
         
         for root, dirs, files in os.walk(target_dir):
-            # Filtrar pastas ignoradas
             dirs[:] = [d for d in dirs if d not in ignore_dirs]
             
             for file in files:
-                # Ignorar ficheiros de imagem ou binários
-                if file.endswith(('.png', '.jpg', '.pyc', '.exe', '.db', '.sqlite')):
+                if file.endswith(ignore_extensions):
+                    continue
+
+                # Ignorar ficheiros específicos do sistema
+                if file in ['security_report.json', 'report.json', 'package-lock.json']:
+                    continue
+                
+                # Ignorar o próprio código do scanner para evitar falsos positivos nas regras
+                if 'scanner.py' in file:
                     continue
                     
                 file_path = os.path.join(root, file)
