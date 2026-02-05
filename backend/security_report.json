@@ -1,67 +1,18 @@
 {
-    "scan_timestamp": "2026-02-05T11:14:04.135614",
-    "total_issues": 8,
+    "scan_timestamp": "2026-02-05T13:57:48.230735",
+    "total_issues": 1,
     "issues": [
         {
-            "file": ".\\report.json",
-            "line": 19,
-            "name": "AWS Access Key",
+            "file": ".\\teste_sql.py",
+            "line": 2,
+            "name": "SQL Injection (String Concatenation)",
             "severity": "CRITICO",
-            "snippet": "\"snippet\": \"aws_secret = \\\"AKIAIOSFODNN7EXAMPLE\\\"\""
-        },
-        {
-            "file": ".\\report.json",
-            "line": 27,
-            "name": "AWS Access Key",
-            "severity": "CRITICO",
-            "snippet": "\"snippet\": \"aws_secret = \\\"AKIAIOSFODNN7EXAMPLE\\\"\""
-        },
-        {
-            "file": ".\\security_report.json",
-            "line": 10,
-            "name": "AWS Access Key",
-            "severity": "CRITICO",
-            "snippet": "\"snippet\": \"aws_secret = \\\"AKIAIOSFODNN7EXAMPLE\\\"\""
-        },
-        {
-            "file": ".\\security_report.json",
-            "line": 17,
-            "name": "AWS Access Key",
-            "severity": "CRITICO",
-            "snippet": "\"snippet\": \"aws_secret = \\\"AKIAIOSFODNN7EXAMPLE\\\"\""
-        },
-        {
-            "file": ".\\security_report.json",
-            "line": 31,
-            "name": "Private Key Block",
-            "severity": "CRITICO",
-            "snippet": "\"snippet\": \"\\\"pattern\\\": r\\\"-----BEGIN PRIVATE KEY"
-        },
-        {
-            "file": ".\\teste_segredos.py",
-            "line": 3,
-            "name": "AWS Access Key",
-            "severity": "CRITICO",
-            "snippet": "aws_secret = \"AKIAIOSFODNN7EXAMPLE\""
-        },
-        {
-            "file": ".\\teste_segredos.py",
-            "line": 4,
-            "name": "Potential Password",
-            "severity": "ALTO",
-            "snippet": "password = \"123456password\""
-        },
-        {
-            "file": ".\\core\\scanner.py",
-            "line": 11,
-            "name": "Private Key Block",
-            "severity": "CRITICO",
-            "snippet": "{\"id\": \"PRIVATE_KEY\", \"name\": \"Private Key Block\","
+            "snippet": "Detected unsafe query construction using '+' operator"
         }
     ],
     "summary": {
-        "critical": 7,
-        "high": 1,
+        "critical": 1,
+        "high": 0,
         "medium": 0
     }
 }
