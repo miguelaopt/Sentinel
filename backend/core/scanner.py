@@ -3,61 +3,46 @@ import re
 import yaml
 
 class Scanner:
-    def __init__(self, rules_file="rules.yaml"):
-        self.rules = self.load_rules(rules_file)
-        # Pastas e ficheiros que devemos ignorar para performance
-        self.ignore_dirs = {'.git', 'node_modules', 'venv', '__pycache__', '.idea', 'dist', 'build'}
-        self.ignore_exts = {'.png', '.jpg', '.exe', '.dll', '.so', '.pdf', '.zip'}
-
-    def load_rules(self, filepath):
-        """Carrega as regras do ficheiro YAML."""
-        if not os.path.exists(filepath):
-            print(f"Erro: Ficheiro de regras '{filepath}' não encontrado.")
-            return []
-        
-        with open(filepath, 'r') as f:
-            data = yaml.safe_load(f)
-            return data.get('rules', [])
+    def __init__(self, rules_file='rules.yaml'):
+        # Regras Hardcoded para garantir funcionamento mesmo sem ficheiro
+        self.rules = [
+            {"id": "AWS_KEY", "name": "AWS Access Key", "pattern": r"(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}", "severity": "CRITICO"},
+            {"id": "STRIPE_KEY", "name": "Stripe Secret Key", "pattern": r"sk_live_[0-9a-zA-Z]{24}", "severity": "CRITICO"},
+            {"id": "PRIVATE_KEY", "name": "Private Key Block", "pattern": r"-----BEGIN PRIVATE KEY-----", "severity": "CRITICO"},
+            {"id": "EMAIL", "name": "Email Address (PII)", "pattern": r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", "severity": "MEDIO"},
+            {"id": "IPV4", "name": "IP Address Exposed", "pattern": r"\b(?!127\.0\.0\.1)(?!0\.0\.0\.0)(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b", "severity": "BAIXO"},
+            {"id": "GENERIC_PWD", "name": "Potential Password", "pattern": r"(password|passwd|pwd)\s*=\s*['\"][^'\"]{3,}['\"]", "severity": "ALTO"}
+        ]
 
     def scan_directory(self, target_dir):
-        """Percorre a diretoria e aplica as regras."""
-        results = []
+        issues = []
+        # Caminhos a ignorar para não ficar lento
+        ignore_dirs = {'.git', 'venv', '__pycache__', 'node_modules', '.next'}
         
         for root, dirs, files in os.walk(target_dir):
             # Filtrar pastas ignoradas
-            dirs[:] = [d for d in dirs if d not in self.ignore_dirs]
+            dirs[:] = [d for d in dirs if d not in ignore_dirs]
             
             for file in files:
-                if any(file.endswith(ext) for ext in self.ignore_exts):
+                # Ignorar ficheiros de imagem ou binários
+                if file.endswith(('.png', '.jpg', '.pyc', '.exe', '.db', '.sqlite')):
                     continue
-                
-                filepath = os.path.join(root, file)
-                file_results = self.scan_file(filepath)
-                if file_results:
-                    results.extend(file_results)
-        
-        return results
-
-    def scan_file(self, filepath):
-        """Analisa um único ficheiro linha a linha."""
-        issues = []
-        try:
-            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                lines = f.readlines()
-                
-                for line_num, line in enumerate(lines, 1):
-                    for rule in self.rules:
-                        if re.search(rule['regex'], line):
-                            issues.append({
-                                "file": filepath,
-                                "line": line_num,
-                                "rule_id": rule['id'],
-                                "name": rule['name'],
-                                "severity": rule['severity'],
-                                "snippet": line.strip()[:60]  # Corta linhas muito longas
-                            })
-        except Exception:
-            # Ignora ficheiros que não consegue ler
-            pass
-            
+                    
+                file_path = os.path.join(root, file)
+                try:
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        lines = f.readlines()
+                        for line_num, line in enumerate(lines, 1):
+                            for rule in self.rules:
+                                if re.search(rule['pattern'], line):
+                                    issues.append({
+                                        "file": file_path,
+                                        "line": line_num,
+                                        "name": rule['name'],
+                                        "severity": rule['severity'],
+                                        "snippet": line.strip()[:50] # Guarda um pedaço do código para mostrar
+                                    })
+                except Exception as e:
+                    pass # Ignora erros de leitura de ficheiros
+                    
         return issues
