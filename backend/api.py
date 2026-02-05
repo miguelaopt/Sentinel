@@ -10,6 +10,7 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 import resend
 import requests
+import json
 
 load_dotenv()
 
@@ -50,8 +51,14 @@ def read_root():
 async def scan_project(
     file: UploadFile = File(...), 
     email_alert: bool = False, # Recebido do frontend
-    slack_webhook: str = None  # Recebido do frontend
+    slack_webhook: str = None,# Recebido do frontend
+    policies_json: str = Form("{}")
 ):
+    try:
+        policies = json.loads(policies_json)
+    except:
+        policies = {"dockerScan": True, "activeValidation": False}
+    
     if not file.filename.endswith('.zip'):
         raise HTTPException(status_code=400, detail="Apenas ficheiros .zip são permitidos.")
 
@@ -67,7 +74,7 @@ async def scan_project(
         except:
             raise HTTPException(status_code=400, detail="Ficheiro ZIP corrompido.")
 
-        issues = scanner.scan_directory(extract_path)
+        issues = scanner.scan_directory(extract_path, policies=policies)
         critical_count = len([i for i in issues if i['severity'] == 'CRITICO'])
 
         # --- 3. LÓGICA DE ALERTAS REAIS ---
@@ -111,11 +118,12 @@ async def scan_project(
             clean_issues.append(c)
 
         return {
-            "scan_timestamp": "Now",
-            "total_issues": len(issues),
-            "summary": summary,
-            "issues": clean_issues
-        }
+        "scan_timestamp": "Now",
+        "applied_policies": policies, # Retorna para confirmação
+        "total_issues": len(issues),
+        "summary": summary,
+        "issues": clean_issues
+    }
 
 @app.post("/fix-code")
 async def fix_code_with_ai(request: FixRequest):

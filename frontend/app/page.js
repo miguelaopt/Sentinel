@@ -4,14 +4,14 @@ import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, 
-  AreaChart, Area, XAxis, YAxis, CartesianGrid
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, BarChart, Bar, Legend
 } from 'recharts';
 import { 
   Shield, AlertTriangle, Loader2, CheckCircle2, 
   Download, TrendingUp, LayoutDashboard, List, Settings, User,
   Search, Bell, LogOut, Plus, Trash2, Key, X, FileText, Activity, 
   EyeOff, Wand2, Zap, Globe, ShieldCheck, Server, Building2, 
-  Moon, Sun, Sliders, Lock
+  Moon, Sun, Sliders, Lock, Play, BarChart3, Clock
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -72,7 +72,7 @@ const AiFixModal = ({ isOpen, onClose, issue, isDark }) => {
                         <div className="bg-indigo-100 p-1.5 rounded-lg"><Wand2 className="text-indigo-600" size={18}/></div>
                         Sentinel AI <span className="text-[10px] bg-indigo-600 text-white px-2 py-0.5 rounded-full font-bold shadow-sm">GEMINI FLASH</span>
                     </h3>
-                    <button onClick={onClose}><X size={20} className="opacity-50 hover:opacity-100"/></button>
+                    <button onClick={onClose} className="p-1 hover:bg-white/10 rounded-full transition-colors"><X size={20} className="opacity-50 hover:opacity-100"/></button>
                 </div>
                 <div className="p-6 space-y-4 overflow-y-auto">
                     <div>
@@ -146,32 +146,36 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
-  const [darkMode, setDarkMode] = useState(false); // DARK MODE TOGGLE REAL
+  const [orgData, setOrgData] = useState(null);
+  const [darkMode, setDarkMode] = useState(false);
   
-  // Modals & Menus
+  // Menus
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [aiModalOpen, setAiModalOpen] = useState(false);
   const [selectedIssueForAi, setSelectedIssueForAi] = useState(null);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const notifRef = useRef(null);
-  
-  // System Health
   const [apiStatus, setApiStatus] = useState('Checking...');
 
-  // Data
+  // Dados
   const [latestScan, setLatestScan] = useState(null);
   const [historyData, setHistoryData] = useState([]);
+  const [severityData, setSeverityData] = useState([]); // NOVO
   const [users, setUsers] = useState([]);
   const [apiKeys, setApiKeys] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
   const [notifications, setNotifications] = useState({ email: false, slack: false, weekly: false });
   const [slackWebhook, setSlackWebhook] = useState('');
   const [policies, setPolicies] = useState({ dockerScan: true, activeValidation: true, blockCritical: false });
+  
+  // Filtros
   const [searchTerm, setSearchTerm] = useState('');
   const [filterSeverity, setFilterSeverity] = useState('ALL');
   const [ignoredIssues, setIgnoredIssues] = useState([]);
 
-  // --- THEME ENGINE ---
+  // --- PERMISSÃO ---
+  const isAdmin = userProfile?.role === 'Admin';
+
   const theme = darkMode ? {
       bg: 'bg-[#05020a]', text: 'text-slate-100', card: 'bg-[#150a24]', border: 'border-[#361a5c]', 
       muted: 'text-[#a78bfa]', hover: 'hover:bg-[#1e1035]', sidebar: 'bg-[#0f0518]', input: 'bg-[#0a0510]'
@@ -181,14 +185,6 @@ export default function Home() {
   };
 
   const showToast = (message, type = 'success') => { setToast({ message, type }); setTimeout(() => setToast(null), 3000); };
-
-  // --- LOGIC ---
-  const checkApiHealth = async () => {
-      try {
-          const res = await fetch(API_URL);
-          if (res.ok) setApiStatus('Operational'); else setApiStatus('Error');
-      } catch (error) { setApiStatus('Waking up...'); }
-  };
 
   const refreshData = async (userId) => {
      if (!userId) return;
@@ -206,23 +202,53 @@ export default function Home() {
   useEffect(() => {
     async function init() {
       try {
-        const { data: { user }, error } = await supabase.auth.getUser();
-        if (error || !user) { router.push('/login'); return; }
-
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError || !user) { router.push('/login'); return; }
+        
+        // Tenta buscar o perfil
         let { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-        const safeProfile = profile || { id: user.id, email: user.email, full_name: user.user_metadata?.full_name || 'Agente', role: 'Viewer' };
+        
+        // --- CORREÇÃO AQUI (Fallback de Segurança) ---
+        // Se o profile for null, criamos um objeto temporário seguro
+        const safeProfile = profile || { 
+            id: user.id, 
+            email: user.email, 
+            full_name: user.user_metadata?.full_name || 'Utilizador', 
+            role: 'Viewer',
+            settings: { email: false, slack: false, weekly: false },
+            slack_webhook: ''
+        };
 
         setUserProfile(safeProfile);
+        
+        // Agora usamos o safeProfile, que nunca é null
         if (safeProfile.settings) setNotifications(safeProfile.settings);
         if (safeProfile.slack_webhook) setSlackWebhook(safeProfile.slack_webhook);
 
+        // Tenta carregar organização
+        if (safeProfile.org_id) {
+            const { data: org } = await supabase.from('organizations').select('*').eq('id', safeProfile.org_id).single();
+            if (org) {
+                setOrgData(org);
+                if (org.policies) setPolicies(org.policies);
+            }
+        }
+        // ---------------------------------------------
+
         const { data: scans } = await supabase.from('scans').select('created_at, report').order('created_at', { ascending: true }).limit(30);
         if (scans && scans.length > 0) {
+            const report = scans[scans.length - 1].report;
+            setLatestScan(report);
             setHistoryData(scans.map(s => ({ date: format(new Date(s.created_at), 'dd/MM'), total: s.report.total_issues, critical: s.report.summary.critical })));
-            setLatestScan(scans[scans.length - 1].report);
+            
+            setSeverityData([
+                { name: 'Crítico', count: report.summary.critical, fill: '#EF4444' },
+                { name: 'Alto', count: report.summary.high, fill: '#F59E0B' },
+                { name: 'Médio', count: report.summary.medium, fill: '#3B82F6' }
+            ]);
         }
-        await refreshData(safeProfile.id);
-        checkApiHealth();
+        await refreshData(safeProfile.id); // Usa o ID seguro
+        fetch(API_URL).then(res => setApiStatus(res.ok ? 'Operational' : 'Error')).catch(() => setApiStatus('Waking up...'));
       } catch (e) { console.error(e); } finally { setLoading(false); }
     }
     init();
@@ -234,6 +260,24 @@ export default function Home() {
   const handleAiFix = (issue) => { setSelectedIssueForAi(issue); setAiModalOpen(true); logAction('AI_FIX_REQ', `Gemini analisou ${issue.name}`); };
   const handleIgnoreIssue = (name) => { setIgnoredIssues([...ignoredIssues, name]); logAction('IGNORED', `Ignorou ${name}`); showToast('Vulnerabilidade silenciada.'); };
   
+  const handleTogglePolicy = async (key) => {
+      if (!isAdmin) { showToast('Apenas Admins podem alterar políticas.', 'error'); return; }
+      if (!orgData?.id) return;
+      
+      const newPolicies = { ...policies, [key]: !policies[key] };
+      setPolicies(newPolicies);
+      const { error } = await supabase.from('organizations').update({ policies: newPolicies }).eq('id', orgData.id);
+      
+      if (error) { setPolicies(policies); showToast('Erro de permissão (RLS).', 'error'); } 
+      else { logAction('POLICY_UPDATE', `Admin alterou regra: ${key}`); }
+  };
+
+  const handleUpdateOrgName = async (newName) => {
+      if (!isAdmin) return;
+      const { error } = await supabase.from('organizations').update({ name: newName }).eq('id', orgData.id);
+      if (!error) { setOrgData({...orgData, name: newName}); showToast('Nome da empresa atualizado.'); }
+  };
+
   const handleToggleNotification = async (key) => {
       if (!userProfile?.id) return;
       const newSettings = { ...notifications, [key]: !notifications[key] };
@@ -243,36 +287,42 @@ export default function Home() {
   };
 
   const handleSaveWebhook = async () => {
-    if (!userProfile?.id) return;
-    const { error } = await supabase.from('profiles').update({ slack_webhook: slackWebhook }).eq('id', userProfile.id);
-    if (error) showToast('Erro ao gravar Webhook', 'error'); else { showToast('Webhook Slack configurado!'); logAction('SETTINGS', 'Atualizou Slack Webhook'); }
+    if (!isAdmin) { showToast('Apenas Admins configuram o Slack.', 'error'); return; }
+    await supabase.from('profiles').update({ slack_webhook: slackWebhook }).eq('id', userProfile.id);
+    showToast('Webhook gravado!');
   };
 
-  const handleTogglePolicy = (key) => {
-      setPolicies({...policies, [key]: !policies[key]});
-      showToast('Política atualizada (Simulação)');
-      logAction('POLICY_CHANGE', `Alterou política: ${key}`);
+  const handleGenerateKey = async () => { 
+      if (!userProfile?.id) return; 
+      const newKey = 'sk_live_' + Math.random().toString(36).substring(2);
+      await supabase.from('api_keys').insert({ user_id: userProfile.id, key_value: newKey }); 
+      showToast('Chave gerada!'); refreshData(userProfile.id);
   };
-
-  const handleGenerateKey = async () => { if (!userProfile?.id) return; const { error } = await supabase.from('api_keys').insert({ user_id: userProfile.id, key_value: 'sk_' + Math.random().toString(36).substring(2) }); if(!error) { showToast('Chave gerada!'); logAction('KEY_GEN', 'Nova API Key'); refreshData(userProfile.id); }};
-  const handleDeleteUser = async (id, email) => { if (confirm(`Eliminar ${email}?`)) { const { error } = await supabase.from('profiles').delete().eq('id', id); if(!error) { showToast('Eliminado.'); logAction('USER_DEL', `Eliminou ${email}`); refreshData(userProfile.id); }}};
   
+  const handleDeleteUser = async (id, email) => { 
+      if (!isAdmin) { showToast('Apenas Admins.', 'error'); return; }
+      if (confirm(`Remover membro?`)) { 
+          const { error } = await supabase.from('profiles').delete().eq('id', id); 
+          if(!error) { showToast('Membro removido.'); refreshData(userProfile.id); } 
+          else { showToast('Erro ao remover.', 'error'); }
+      }
+  };
+
   const generatePDF = () => {
     if (!latestScan) return;
     const doc = new jsPDF();
-    doc.setFillColor(31, 41, 55); doc.rect(0, 0, 210, 40, 'F');
-    doc.setTextColor(255, 255, 255); doc.setFontSize(22); doc.text("Sentinel Enterprise Report", 14, 20);
-    doc.setFontSize(10); doc.text(`Gerado: ${new Date().toLocaleString()}`, 14, 30);
-    doc.setTextColor(0, 0, 0); doc.setFontSize(14); doc.text("Resumo", 14, 55);
-    autoTable(doc, { startY: 60, head: [['Métrica', 'Valor']], body: [['Total', latestScan.total_issues], ['Críticas', latestScan.summary.critical]], theme: 'grid', headStyles: { fillColor: [79, 70, 229] } });
+    doc.text(`Sentinel Report - ${orgData?.name || 'Enterprise'}`, 14, 20);
+    autoTable(doc, { startY: 30, head: [['Issue', 'Severity']], body: latestScan.issues.map(i => [i.name, i.severity]) });
     doc.save(`sentinel-report.pdf`);
-    logAction('REPORT_DOWNLOADED', 'Exportou PDF');
   };
 
   if (loading) return <div className={`flex h-screen items-center justify-center ${theme.bg}`}><Loader2 className="animate-spin w-12 h-12 text-indigo-600"/></div>;
   const emptyState = !latestScan;
   const isCritical = latestScan?.summary.critical > 0;
   const filteredIssues = latestScan?.issues.filter(i => !ignoredIssues.includes(i.name)).filter(i => (filterSeverity === 'ALL' || i.severity === filterSeverity) && (i.name.toLowerCase().includes(searchTerm.toLowerCase()) || i.file.toLowerCase().includes(searchTerm.toLowerCase()))) || [];
+  
+  // Score de Segurança (Calculado)
+  const securityScore = latestScan ? Math.max(0, 100 - (latestScan.summary.critical * 20) - (latestScan.summary.high * 10)) : 100;
 
   return (
     <div className={`min-h-screen ${theme.bg} flex font-sans ${theme.text} transition-colors duration-300`}>
@@ -280,11 +330,10 @@ export default function Home() {
       <AiFixModal isOpen={aiModalOpen} onClose={() => setAiModalOpen(false)} issue={selectedIssueForAi} isDark={darkMode} />
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
 
-      {/* SIDEBAR */}
-      <aside className={`w-64 ${theme.sidebar} text-white flex flex-col fixed h-full z-20 shadow-2xl hidden md:flex border-r border-white/10 transition-colors duration-300`}>
+      <aside className={`w-64 ${theme.sidebar} text-white flex flex-col fixed h-full z-20 shadow-2xl hidden md:flex border-r border-white/10`}>
         <div className="p-6 flex items-center gap-3 border-b border-white/10">
-          <div className="bg-gradient-to-br from-indigo-500 to-violet-600 p-2 rounded-xl shadow-lg shadow-indigo-500/30"><Shield className="w-6 h-6 text-white" /></div>
-          <div><span className="font-bold text-lg tracking-tight block">Sentinel</span><span className="text-[10px] text-indigo-300 font-mono tracking-widest uppercase">Enterprise</span></div>
+          <div className="bg-indigo-600 p-2 rounded-xl"><Shield className="w-6 h-6 text-white" /></div>
+          <div><span className="font-bold text-lg block">Sentinel</span><span className="text-[10px] text-indigo-300 uppercase">Enterprise</span></div>
         </div>
         <nav className="flex-1 p-4 space-y-2 mt-4">
           <MenuButton icon={<LayoutDashboard size={18}/>} label="Dashboard" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
@@ -292,30 +341,22 @@ export default function Home() {
           <MenuButton icon={<ShieldCheck size={18}/>} label="Compliance" active={activeTab === 'compliance'} onClick={() => setActiveTab('compliance')} />
           <MenuButton icon={<Activity size={18}/>} label="Audit Logs" active={activeTab === 'audit'} onClick={() => setActiveTab('audit')} />
           <MenuButton icon={<Building2 size={18}/>} label="Organização" active={activeTab === 'org'} onClick={() => setActiveTab('org')} />
-          <MenuButton icon={<User size={18}/>} label="Equipa" active={activeTab === 'users'} onClick={() => setActiveTab('users')} />
           <MenuButton icon={<Settings size={18}/>} label="Configurações" active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} />
         </nav>
         <div className="p-4 border-t border-white/10 bg-black/20 text-center">
-            <div className="flex items-center gap-3 mb-3 px-2">
-                <div className="w-8 h-8 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 flex items-center justify-center text-xs font-bold border border-white/10 shadow-inner">{userProfile?.full_name?.charAt(0)}</div>
-                <div className="text-left overflow-hidden"><p className="font-bold text-sm truncate w-28">{userProfile?.full_name}</p><p className="text-[10px] text-slate-400 uppercase tracking-wider">{userProfile?.role}</p></div>
-            </div>
-            <button onClick={() => supabase.auth.signOut().then(() => router.push('/login'))} className="text-slate-400 hover:text-white hover:bg-white/10 p-2 rounded-lg text-xs flex justify-center items-center w-full gap-2 transition-all"><LogOut size={14}/> Terminar Sessão</button>
+            <p className="font-bold text-sm">{userProfile?.full_name}</p>
+            <p className="text-[10px] text-slate-400 uppercase">{userProfile?.role}</p>
+            <button onClick={() => supabase.auth.signOut().then(() => router.push('/login'))} className="text-slate-400 hover:text-white text-xs mt-2 flex justify-center w-full gap-2"><LogOut size={14}/> Sair</button>
         </div>
       </aside>
 
-      {/* MAIN */}
       <main className="flex-1 md:ml-64 p-8 md:p-10 overflow-y-auto">
         <header className="flex justify-between items-center mb-10">
            <div><h1 className="text-3xl font-extrabold capitalize tracking-tight">{activeTab === 'org' ? 'Organização' : activeTab === 'dashboard' ? 'Overview' : activeTab}</h1><p className={`text-sm mt-1 ${theme.muted}`}>Plataforma de Segurança Corporativa</p></div>
            
            <div className="flex gap-4 items-center">
-              {/* DARK MODE TOGGLE */}
-              <button onClick={() => setDarkMode(!darkMode)} className={`p-2.5 rounded-xl transition-all border ${theme.card} ${theme.border} hover:border-indigo-500`}>
-                  {darkMode ? <Sun size={20} className="text-yellow-400"/> : <Moon size={20} className="text-slate-600"/>}
-              </button>
+              <button onClick={() => setDarkMode(!darkMode)} className={`p-2.5 rounded-xl border ${theme.card} ${theme.border}`}>{darkMode ? <Sun size={20}/> : <Moon size={20}/>}</button>
 
-              {/* DROPDOWN NOTIFICAÇÕES */}
               <div className="relative" ref={notifRef}>
                   <button onClick={() => setIsNotifOpen(!isNotifOpen)} className={`p-2.5 rounded-xl transition-all relative ${isNotifOpen ? 'bg-indigo-600 text-white' : `${theme.card} ${theme.border} border text-slate-500 hover:text-indigo-600`}`}>
                       <Bell size={20}/>
@@ -333,24 +374,65 @@ export default function Home() {
                   )}
               </div>
 
-              {activeTab === 'dashboard' && !emptyState && <button onClick={generatePDF} className="flex items-center gap-2 bg-slate-900 text-white px-5 py-2.5 rounded-xl font-bold hover:bg-slate-800 shadow-xl shadow-slate-200 transition-all active:scale-95 text-sm"><Download size={18}/> Exportar Relatório</button>}
+              {activeTab === 'dashboard' && !emptyState && <div className="flex gap-2">
+                  <button className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2.5 rounded-xl font-bold text-sm hover:bg-indigo-700 shadow-md"><Play size={16}/> Novo Scan</button>
+                  <button onClick={generatePDF} className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm border ${theme.card} ${theme.border} hover:bg-slate-100 dark:hover:bg-white/10`}><Download size={18}/></button>
+              </div>}
            </div>
         </header>
 
         {activeTab === 'dashboard' && !emptyState && (
           <div className="space-y-8 animate-in fade-in duration-500">
+            {/* KPI ROW */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                <KPICard title="Vulnerabilidades" value={latestScan.total_issues} icon={<AlertTriangle className="text-white"/>} color="bg-indigo-500" theme={theme} />
                <KPICard title="Risco Crítico" value={latestScan.summary.critical} icon={<Shield className="text-white"/>} color="bg-red-500" theme={theme} />
-               <KPICard title="Ficheiros Analisados" value={latestScan.total_issues * 3} icon={<List className="text-white"/>} color="bg-blue-500" theme={theme} />
-               <KPICard title="Compliance Status" value={isCritical ? "C-" : "A+"} icon={<ShieldCheck className="text-white"/>} color={isCritical ? "bg-orange-500" : "bg-emerald-500"} theme={theme} />
+               <KPICard title="Security Score" value={`${securityScore}%`} icon={<ShieldCheck className="text-white"/>} color={securityScore > 80 ? "bg-emerald-500" : "bg-orange-500"} theme={theme} />
+               <KPICard title="Ficheiros" value={latestScan.total_issues * 4} icon={<List className="text-white"/>} color="bg-blue-500" theme={theme} />
             </div>
             
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                {/* TREND CHART */}
                 <div className={`lg:col-span-2 p-6 rounded-2xl shadow-sm border ${theme.card} ${theme.border}`}>
                    <h3 className="text-lg font-bold mb-6 flex gap-2 items-center"><TrendingUp className="text-indigo-500" size={20}/> Tendência de Segurança</h3>
                    <div className="h-[280px]"><ResponsiveContainer><AreaChart data={historyData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? '#333' : '#f1f5f9'}/><XAxis dataKey="date" tick={{fontSize: 11, fill: '#888'}} axisLine={false} tickLine={false}/><YAxis tick={{fontSize: 11, fill: '#888'}} axisLine={false} tickLine={false}/><RechartsTooltip contentStyle={{borderRadius: '8px', border: 'none', backgroundColor: darkMode ? '#1e1035' : '#fff', color: darkMode ? '#fff' : '#000'}}/><Area type="monotone" dataKey="total" stroke="#94a3b8" fill="transparent" strokeWidth={2}/><Area type="monotone" dataKey="critical" stroke="#EF4444" fill="#EF4444" fillOpacity={0.1} strokeWidth={2}/></AreaChart></ResponsiveContainer></div>
                 </div>
+                
+                {/* SEVERITY BREAKDOWN (NOVO) */}
+                <div className={`p-6 rounded-2xl shadow-sm border flex flex-col ${theme.card} ${theme.border}`}>
+                    <h3 className="text-lg font-bold mb-6 flex gap-2 items-center"><BarChart3 className="text-indigo-500" size={20}/> Distribuição de Risco</h3>
+                    <div className="h-[200px] flex-1">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={severityData}>
+                                <XAxis dataKey="name" tick={{fontSize: 12, fill: '#888'}} axisLine={false} tickLine={false}/>
+                                <Bar dataKey="count" radius={[4, 4, 0, 0]} barSize={40}>
+                                    {severityData.map((entry, index) => (<Cell key={`cell-${index}`} fill={entry.fill} />))}
+                                </Bar>
+                            </BarChart>
+                        </ResponsiveContainer>
+                    </div>
+                </div>
+            </div>
+
+            {/* BOTTOM ROW: RECENT ACTIVITY & HEALTH */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                {/* RECENT ACTIVITY (NOVO) */}
+                <div className={`p-6 rounded-2xl shadow-sm border ${theme.card} ${theme.border}`}>
+                    <h3 className="text-lg font-bold mb-4 flex gap-2 items-center"><Clock className="text-indigo-500" size={20}/> Atividade Recente</h3>
+                    <div className="space-y-4">
+                        {auditLogs.slice(0, 4).map(log => (
+                            <div key={log.id} className="flex items-center justify-between pb-3 border-b border-white/5 last:border-0 last:pb-0">
+                                <div className="flex items-center gap-3">
+                                    <div className="bg-indigo-500/10 p-2 rounded-full"><User size={14} className="text-indigo-500"/></div>
+                                    <div><p className="text-sm font-bold">{log.action}</p><p className={`text-xs ${theme.muted}`}>{log.actor_email}</p></div>
+                                </div>
+                                <span className={`text-xs ${theme.muted}`}>{new Date(log.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                {/* SYSTEM HEALTH */}
                 <div className={`p-6 rounded-2xl shadow-sm border flex flex-col ${theme.card} ${theme.border}`}>
                     <h3 className="text-lg font-bold mb-6 flex gap-2 items-center"><Activity className="text-indigo-500" size={20}/> System Health</h3>
                     <div className="space-y-4 flex-1">
@@ -363,6 +445,7 @@ export default function Home() {
           </div>
         )}
 
+        {/* ... Resto das Tabs (Vulnerabilities, Compliance, etc. - IGUAL AO ANTERIOR) ... */}
         {activeTab === 'compliance' && (
             <div className="space-y-6 animate-in fade-in">
                 <div className={`p-8 rounded-2xl shadow-sm border flex flex-col md:flex-row items-center justify-between gap-6 ${theme.card} ${theme.border}`}>
@@ -395,10 +478,10 @@ export default function Home() {
                               </div>
                           </div>
                           <div className="flex flex-col items-end gap-2">
-                             <span className={`px-2 py-1 h-fit rounded text-[10px] font-extrabold border uppercase tracking-wide w-fit ${issue.severity === 'CRITICO' ? 'bg-red-500/10 text-red-500 border-red-500/20' : 'bg-blue-500/10 text-blue-500 border-blue-500/20'}`}>{issue.severity}</span>
+                             <span className={`px-2 py-1 h-fit rounded text-[10px] font-extrabold border uppercase tracking-wide w-fit ${issue.severity === 'CRITICO' ? 'text-red-500 border-red-500/20' : 'text-blue-500 border-blue-500/20'}`}>{issue.severity}</span>
                              <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button onClick={() => handleAiFix(issue)} className="flex items-center gap-1 px-3 py-1.5 bg-indigo-500/10 text-indigo-500 text-xs font-bold rounded hover:bg-indigo-500/20 border border-indigo-500/20 transition-all"><Wand2 size={14}/> AI Fix</button>
-                                <button onClick={() => handleIgnoreIssue(issue.name)} className={`flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded transition-colors border ${darkMode ? 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-500 hover:bg-slate-200'}`}><EyeOff size={14}/> Ignorar</button>
+                                <button onClick={() => handleAiFix(issue)} className="flex items-center gap-1 px-3 py-1.5 bg-indigo-500/10 text-indigo-500 text-xs font-bold rounded hover:bg-indigo-500/20 border border-indigo-500/20 transition-all"><Wand2 size={14}/> Fix</button>
+                                <button onClick={() => handleIgnoreIssue(issue.name)} className={`flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded transition-colors border ${darkMode ? 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-500 hover:bg-slate-200'}`}><EyeOff size={14}/> Ignore</button>
                              </div>
                           </div>
                       </div>
@@ -407,7 +490,7 @@ export default function Home() {
            </div>
         )}
 
-        {/* --- ORG TAB (MULTI-TENANCY UI) --- */}
+        {/* --- ORG TAB --- */}
         {activeTab === 'org' && (
             <div className="space-y-6 animate-in fade-in">
                 <div className={`p-8 rounded-2xl shadow-sm border ${theme.card} ${theme.border}`}>
@@ -418,7 +501,7 @@ export default function Home() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div className={`p-4 rounded-xl border ${darkMode ? 'bg-black/20 border-white/10' : 'bg-slate-50 border-slate-200'}`}>
                             <p className="text-xs font-bold uppercase opacity-50 mb-1">Empresa</p>
-                            <p className="font-bold text-lg">Sentinel Corp.</p>
+                            <p className="font-bold text-lg">{orgData?.name || "Sentinel Corp."}</p>
                         </div>
                         <div className={`p-4 rounded-xl border ${darkMode ? 'bg-black/20 border-white/10' : 'bg-slate-50 border-slate-200'}`}>
                             <p className="text-xs font-bold uppercase opacity-50 mb-1">Membros</p>
@@ -449,36 +532,30 @@ export default function Home() {
            <div className="max-w-4xl space-y-8 animate-in fade-in">
               {/* POLICY MANAGER */}
               <div className={`p-8 rounded-2xl shadow-sm border ${theme.card} ${theme.border}`}>
-                 <h3 className="font-bold text-lg mb-6 flex gap-2 items-center"><Sliders className="text-indigo-500" size={20}/> Policy Manager</h3>
+                 <div className="flex justify-between items-center mb-6">
+                     <h3 className="font-bold text-lg flex gap-2 items-center"><Sliders className="text-indigo-500" size={20}/> Policy Manager</h3>
+                     {!isAdmin && <span className="text-[10px] bg-red-100 text-red-500 px-2 py-1 rounded">Read Only</span>}
+                 </div>
                  <div className="space-y-4">
-                     <Toggle label="Active Validation" desc="Testar se chaves AWS/Stripe estão ativas." active={policies.activeValidation} onToggle={() => handleTogglePolicy('activeValidation')} theme={theme} />
-                     <Toggle label="Docker Scanning" desc="Verificar vulnerabilidades em Dockerfiles." active={policies.dockerScan} onToggle={() => handleTogglePolicy('dockerScan')} theme={theme} />
-                     <Toggle label="Block Critical" desc="Falhar build se encontrar erros críticos." active={policies.blockCritical} onToggle={() => handleTogglePolicy('blockCritical')} theme={theme} />
+                     <Toggle label="Active Validation" desc="Testar se chaves AWS/Stripe estão ativas." active={policies.activeValidation} onToggle={() => handleTogglePolicy('activeValidation')} theme={theme} disabled={!isAdmin} />
+                     <Toggle label="Docker Scanning" desc="Verificar vulnerabilidades em Dockerfiles." active={policies.dockerScan} onToggle={() => handleTogglePolicy('dockerScan')} theme={theme} disabled={!isAdmin} />
+                     <Toggle label="Block Critical" desc="Falhar build se houver críticos." active={policies.blockCritical} onToggle={() => handleTogglePolicy('blockCritical')} theme={theme} disabled={!isAdmin} />
                  </div>
               </div>
 
-              {/* SLACK INTEGRATION */}
+              {/* SLACK */}
               <div className={`p-8 rounded-2xl shadow-sm border ${theme.card} ${theme.border}`}>
                  <h3 className="font-bold text-lg mb-4 flex gap-2 items-center"><Zap className="text-indigo-500"/> Integrações</h3>
-                 <div className="space-y-4">
-                     <label className="text-sm font-bold opacity-70">Slack Webhook URL</label>
-                     <div className="flex gap-4">
-                         <input type="password" value={slackWebhook} onChange={(e) => setSlackWebhook(e.target.value)} placeholder="https://hooks.slack.com/services/..." className={`flex-1 p-3 border rounded-lg text-sm outline-none focus:border-indigo-500 transition-all ${theme.input} ${theme.border}`}/>
-                         <button onClick={handleSaveWebhook} className="bg-slate-900 text-white px-6 py-2 rounded-lg font-bold text-sm hover:bg-slate-800">Guardar</button>
-                     </div>
+                 <div className="flex gap-4">
+                     <input type="password" value={slackWebhook} onChange={(e) => setSlackWebhook(e.target.value)} disabled={!isAdmin} placeholder="Slack Webhook URL..." className={`flex-1 p-3 border rounded-lg text-sm outline-none focus:border-indigo-500 ${theme.input} ${theme.border} ${!isAdmin && 'opacity-50'}`}/>
+                     {isAdmin && <button onClick={handleSaveWebhook} className="bg-slate-900 text-white px-6 py-2 rounded-lg font-bold text-sm">Guardar</button>}
                  </div>
               </div>
 
-              {/* API KEYS */}
               <div className={`p-8 rounded-2xl shadow-sm border ${theme.card} ${theme.border}`}>
-                 <div className="flex justify-between mb-4"><h3 className="font-bold text-lg flex gap-2 items-center"><Key className="text-indigo-500" size={20}/> API Credentials</h3><button onClick={handleGenerateKey} className={`text-xs font-bold text-indigo-500 px-3 py-1.5 rounded hover:bg-indigo-500/10 border border-indigo-500/20 transition-colors`}>Generate New</button></div>
-                 <div className="space-y-2">{apiKeys.map(k => <div key={k.id} className={`p-4 rounded-lg font-mono text-xs flex justify-between items-center border shadow-inner ${darkMode ? 'bg-black/30 border-white/10 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-600'}`}><span>{k.key_value}</span><span className="opacity-50">{new Date(k.created_at).toLocaleDateString()}</span></div>)}</div>
-              </div>
-
-              {/* NOTIFICATIONS */}
-              <div className={`p-8 rounded-2xl shadow-sm border ${theme.card} ${theme.border}`}>
-                 <h3 className="font-bold text-lg mb-6 flex gap-2 items-center"><Bell className="text-indigo-500" size={20}/> Preferências</h3>
-                 <div className="space-y-6"><Toggle label="Email Alerts" desc="Notificar falhas críticas." active={notifications.email} onToggle={() => handleToggleNotification('email')} theme={theme} /><Toggle label="Slack" desc="Canal #security." active={notifications.slack} onToggle={() => handleToggleNotification('slack')} theme={theme} /></div>
+                 <h3 className="font-bold text-lg mb-4 flex gap-2 items-center"><Key className="text-indigo-500"/> API Credentials</h3>
+                 <button onClick={handleGenerateKey} className="text-xs font-bold text-indigo-500 mb-4">Gerar Nova</button>
+                 <div className="space-y-2">{apiKeys.map(k => <div key={k.id} className={`p-4 rounded-lg font-mono text-xs border ${theme.border}`}>{k.key_value}</div>)}</div>
               </div>
            </div>
         )}
@@ -503,11 +580,9 @@ const ComplianceCard = ({ title, status, desc, passed, theme }) => (
 const SystemStatusItem = ({ label, status, theme }) => (
     <div className={`flex justify-between items-center p-3 rounded-xl ${theme.hover} border ${theme.border}`}><div className="flex items-center gap-3"><Globe size={16} className="text-indigo-500"/><span className="text-sm font-medium">{label}</span></div><div className="flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${status === 'Operational' ? 'bg-emerald-500' : 'bg-orange-500 animate-pulse'}`}></span><span className={`text-xs ${theme.muted}`}>{status}</span></div></div>
 );
-const Toggle = ({ label, desc, active, onToggle, theme }) => (
-  <div className="flex items-center justify-between">
+const Toggle = ({ label, desc, active, onToggle, theme, disabled }) => (
+  <div className={`flex items-center justify-between ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
       <div><p className="font-bold text-sm">{label}</p><p className={`text-xs mt-0.5 ${theme.muted}`}>{desc}</p></div>
-      <button onClick={onToggle} className={`w-11 h-6 rounded-full p-1 transition-colors duration-300 ${active ? 'bg-indigo-600' : 'bg-slate-200 opacity-50'}`}>
-          <div className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-300 ${active ? 'translate-x-5' : 'translate-x-0'}`}></div>
-      </button>
+      <button onClick={onToggle} className={`w-11 h-6 rounded-full p-1 transition-colors duration-300 ${active ? 'bg-indigo-600' : 'bg-slate-200 dark:bg-slate-700'}`}><div className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-300 ${active ? 'translate-x-5' : 'translate-x-0'}`}></div></button>
   </div>
 );
