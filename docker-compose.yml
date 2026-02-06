@@ -3,10 +3,10 @@ version: '3.8'
 services:
   # --- 1. REDIS ---
   redis:
-    image: redis:alpine
-    container_name: sentinel_redis
+    image: redis:alpine            # Usa a imagem oficial leve do Redis
+    container_name: sentinel_redis # Nome para identificar fácil no Docker
     ports:
-      - "6379:6379"
+      - "6379:6379"                # Expõe a porta padrão do Redis
     restart: always
 
   # --- 2. API (BACKEND) ---
