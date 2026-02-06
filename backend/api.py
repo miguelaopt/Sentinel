@@ -1,146 +1,137 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, HTTPException
-from fastapi.middleware.cors import CORSMiddleware # <--- IMPORTANTE
-import shutil
 import os
-import zipfile
-import tempfile
-from core.scanner import Scanner
+import shutil
+import json
+from typing import Optional
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from supabase import create_client, Client
+from core.celery_app import celery_app
+from core.tasks import scan_code_task
+from celery.result import AsyncResult
 from pydantic import BaseModel
 import google.generativeai as genai
-from dotenv import load_dotenv
-import resend
-import requests
-import json
 
-load_dotenv()
+# --- CONFIGURAÇÃO ---
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-app = FastAPI(title="Sentinel Enterprise API", version="3.0")
+app = FastAPI(title="Sentinel Enterprise API")
 
-# --- CORREÇÃO DO FAILED TO FETCH (CORS) ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # ACEITA TUDO (Frontend Local e Vercel)
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-scanner = Scanner()
+UPLOAD_DIR = "/app/uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# --- CONFIGURAÇÃO GEMINI ---
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
-model = None
+# --- DEPENDÊNCIA DE SEGURANÇA ---
+async def get_current_org_id(
+    authorization: Optional[str] = Header(None), 
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Descobre o org_id baseado no Token (Frontend) ou API Key (CLI)
+    """
+    user_id = None
 
-if GOOGLE_API_KEY:
+    # 1. Tentar via API Key (CLI / CI/CD)
+    if x_api_key:
+        # Procurar chave na DB
+        res = supabase.table("api_keys").select("user_id").eq("key_value", x_api_key).execute()
+        if res.data:
+            user_id = res.data[0]['user_id']
+    
+    # 2. Tentar via JWT Token (Frontend)
+    elif authorization:
+        try:
+            token = authorization.replace("Bearer ", "")
+            user = supabase.auth.get_user(token)
+            if user:
+                user_id = user.user.id
+        except Exception as e:
+            print(f"Auth Error: {e}")
+
+    if not user_id:
+        # Se for um scan anónimo ou falhar autenticação, devolvemos None
+        # (O worker depois cria uma org temporária ou rejeita)
+        return None
+
+    # 3. Buscar a Org ID do perfil
     try:
-        genai.configure(api_key=GOOGLE_API_KEY)
-        model = genai.GenerativeModel('gemini-2.5-flash')
-        print("✅ Gemini AI Configurado com sucesso.")
-    except Exception as e:
-        print(f"⚠️ Erro ao configurar Gemini: {e}")
+        profile = supabase.table("profiles").select("org_id").eq("id", user_id).single().execute()
+        if profile.data:
+            return profile.data['org_id']
+    except:
+        pass
+    
+    return None
 
+# --- ENDPOINTS ---
+
+@app.get("/")
+def health_check():
+    return {"status": "Sentinel Enterprise System Operational"}
+
+@app.post("/scan")
+async def start_scan(
+    file: UploadFile = File(...), 
+    policies_json: str = Form("{}"),
+    org_id: str = Depends(get_current_org_id) # Injeção automática da Org
+):
+    try:
+        policies = json.loads(policies_json)
+        
+        file_location = os.path.join(UPLOAD_DIR, file.filename)
+        with open(file_location, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        # Passar o org_id para a tarefa
+        task = scan_code_task.delay(file_location, policies, org_id)
+        
+        return {
+            "message": "Scan started",
+            "task_id": task.id,
+            "status": "pending",
+            "org_detected": org_id is not None
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/scan/{task_id}")
+def get_scan_status(task_id: str):
+    task_result = AsyncResult(task_id, app=celery_app)
+    
+    if task_result.state == 'PENDING':
+        return {"status": "processing"}
+    elif task_result.state == 'SUCCESS':
+        return {"status": "completed", "report": task_result.result}
+    elif task_result.state == 'FAILURE':
+        return {"status": "failed", "error": str(task_result.result)}
+    
+    return {"status": task_result.state}
+
+# --- AI FIX ---
 class FixRequest(BaseModel):
     snippet: str
     vulnerability: str
 
-@app.get("/")
-def read_root():
-    return {"status": "Sentinel AI Core Online 🟢", "ai_engine": "Gemini 2.5 Flash"}
-
-@app.post("/scan")
-async def scan_project(
-    file: UploadFile = File(...), 
-    email_alert: bool = False, # Recebido do frontend
-    slack_webhook: str = None,# Recebido do frontend
-    policies_json: str = Form("{}")
-):
-    try:
-        policies = json.loads(policies_json)
-    except:
-        policies = {"dockerScan": True, "activeValidation": False}
-    
-    if not file.filename.endswith('.zip'):
-        raise HTTPException(status_code=400, detail="Apenas ficheiros .zip são permitidos.")
-
-    with tempfile.TemporaryDirectory() as temp_dir:
-        zip_path = os.path.join(temp_dir, file.filename)
-        with open(zip_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-
-        extract_path = os.path.join(temp_dir, "source_code")
-        try:
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.extractall(extract_path)
-        except:
-            raise HTTPException(status_code=400, detail="Ficheiro ZIP corrompido.")
-
-        issues = scanner.scan_directory(extract_path, policies=policies)
-        critical_count = len([i for i in issues if i['severity'] == 'CRITICO'])
-
-        # --- 3. LÓGICA DE ALERTAS REAIS ---
-    if critical_count > 0:
-        
-        # Enviar Email (Resend)
-        if email_alert and os.environ.get("RESEND_API_KEY"):
-            try:
-                resend.api_key = os.environ.get("RESEND_API_KEY")
-                resend.Emails.send({
-                    "from": os.environ.get("FROM_EMAIL", "onboarding@resend.dev"),
-                    "to": "admin@empresa.com", # Num caso real, viria do user profile
-                    "subject": f"🚨 ALERTA SENTINEL: {critical_count} Falhas Críticas",
-                    "html": f"<strong>Atenção:</strong> O scan detetou {critical_count} vulnerabilidades críticas. Verifique o dashboard imediatamente."
-                })
-                print("📧 Email enviado.")
-            except Exception as e:
-                print(f"Erro Email: {e}")
-
-        # Enviar Slack
-        if slack_webhook:
-            try:
-                requests.post(slack_webhook, json={
-                    "text": f"🚨 *Sentinel Security Alert*\nCríticos detetados: {critical_count}\n<https://teu-app.vercel.app|Ver Dashboard>"
-                })
-                print("💬 Slack enviado.")
-            except Exception as e:
-                print(f"Erro Slack: {e}")
-        
-        summary = {
-            "critical": len([i for i in issues if i['severity'] == 'CRITICO']),
-            "high": len([i for i in issues if i['severity'] == 'ALTO']),
-            "medium": len([i for i in issues if i['severity'] == 'MEDIO']),
-            "low": len([i for i in issues if i['severity'] == 'BAIXO']),
-        }
-
-        clean_issues = []
-        for issue in issues:
-            c = issue.copy()
-            c['file'] = issue['file'].replace(extract_path, "").lstrip(os.sep)
-            clean_issues.append(c)
-
-        return {
-        "scan_timestamp": "Now",
-        "applied_policies": policies, # Retorna para confirmação
-        "total_issues": len(issues),
-        "summary": summary,
-        "issues": clean_issues
-    }
-
 @app.post("/fix-code")
-async def fix_code_with_ai(request: FixRequest):
-    if not model:
-        raise HTTPException(status_code=503, detail="Serviço de IA não configurado no servidor (Falta GOOGLE_API_KEY).")
-
-    prompt = f"""
-    You are an Expert Security Engineer. Fix the code below which has a '{request.vulnerability}'.
-    Return ONLY the fixed code without markdown formatting.
-    
-    CODE:
-    {request.snippet}
-    """
-    
+def fix_code_ai(req: FixRequest):
     try:
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key: return {"fixed_code": "AI Key not configured."}
+        
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-pro')
+        prompt = f"Fix this code snippet securely. Vulnerability: {req.vulnerability}.\nCode:\n{req.snippet}\nReturn ONLY the fixed code block."
+        
         response = model.generate_content(prompt)
-        return {"fixed_code": response.text.strip()}
+        return {"fixed_code": response.text.replace("```", "")}
     except Exception as e:
-        print(f"Gemini Error: {e}")
-        raise HTTPException(status_code=500, detail=f"Erro na IA: {str(e)}")
+        return {"fixed_code": "AI Error."}

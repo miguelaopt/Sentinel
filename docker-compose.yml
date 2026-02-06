@@ -1,7 +1,14 @@
 version: '3.8'
 
 services:
-  # --- O CÉREBRO (API) ---
+  # --- 1. REDIS (A Fila) ---
+  redis:
+    image: redis:alpine
+    container_name: sentinel_redis
+    ports:
+      - "6379:6379"
+
+  # --- 2. API (A Rececionista) ---
   sentinel-api:
     build:
       context: ./backend
@@ -13,9 +20,35 @@ services:
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
       - ADMIN_SUDO_PASSWORD=${ADMIN_SUDO_PASSWORD}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    volumes:
+      - sentinel_uploads:/app/uploads # Partilha pasta de uploads
+    depends_on:
+      - redis
     restart: always
 
-  # --- A CARA (Dashboard) ---
+  # --- 3. WORKER (O Trabalhador) ---
+  sentinel-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sentinel_worker
+    # O comando que inicia o Celery em vez da API
+    command: celery -A core.tasks worker --loglevel=info
+    environment:
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    volumes:
+      - sentinel_uploads:/app/uploads # Lê da mesma pasta
+    depends_on:
+      - redis
+      - sentinel-api
+    restart: always
+
+  # --- 4. FRONTEND ---
   sentinel-dashboard:
     build:
       context: ./frontend
@@ -30,3 +63,6 @@ services:
     depends_on:
       - sentinel-api
     restart: always
+
+volumes:
+  sentinel_uploads:

@@ -14,10 +14,10 @@ import {
   Moon, Sun, Sliders, Lock, Play, BarChart3, Clock, Terminal, FileWarning, Mail, Fingerprint, LogIn
 } from 'lucide-react';
 import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import autoTable from 'jspdf-autotable'; // Certifica-te que instalaste: npm install jspdf-autotable
 import { format } from 'date-fns';
 
-const API_URL = 'https://sentinel-api-rr8s.onrender.com'; 
+const API_URL = '[https://sentinel-api-rr8s.onrender.com](https://sentinel-api-rr8s.onrender.com)'; // Ou localhost:8000 se local
 
 // --- COLORS PALETTE ---
 const COLORS = {
@@ -107,7 +107,7 @@ export default function Home() {
   const [toast, setToast] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
   const [darkMode, setDarkMode] = useState(false);
-  const [terminalLogs, setTerminalLogs] = useState(["> Sentinel Core v5.0 initialized...", "> System ready."]);
+  const [terminalLogs, setTerminalLogs] = useState(["> Sentinel Core v6.0 initialized...", "> Async Queue System ready."]);
   
   // Settings States
   const [notifications, setNotifications] = useState({ email: false, slack: false });
@@ -170,36 +170,79 @@ export default function Home() {
 
   const handleScanClick = () => { if (fileInputRef.current) fileInputRef.current.click(); };
 
+  // --- ASYNC SCAN LOGIC (CORRIGIDA COM AUTENTICAÇÃO) ---
   const handleFileUpload = async (event) => {
       const file = event.target.files[0];
       if (!file) return;
-      addLog(`Analyzing: ${file.name}`);
-      showToast("Scan iniciado...", "success");
+
+      addLog(`Selected: ${file.name}`);
+      showToast("Upload iniciado...", "success");
+
       const formData = new FormData();
       formData.append('file', file);
       formData.append('policies_json', JSON.stringify(policies));
+
+      // Obter sessão atual para enviar o Token JWT
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
       try {
-          addLog("Uploading to Core...");
-          const res = await fetch(`${API_URL}/scan`, { method: 'POST', body: formData });
-          if (!res.ok) throw new Error("Upload failed");
-          addLog("Running SAST engine...");
-          const data = await res.json();
-          addLog(`Scan finished. ${data.total_issues} issues found.`);
-          await supabase.from('scans').insert({ report: data, status: 'Completed' });
-          setLatestScan(data);
-          setSeverityData([
-                { name: 'Crítico', count: data.summary.critical, fill: COLORS.critical },
-                { name: 'Alto', count: data.summary.high, fill: COLORS.high },
-                { name: 'Médio', count: data.summary.medium, fill: COLORS.medium }
-          ]);
-          const fileCounts = {};
-          data.issues.forEach(i => { fileCounts[i.file] = (fileCounts[i.file] || 0) + 1 });
-          setTopFiles(Object.entries(fileCounts).sort((a,b) => b[1] - a[1]).slice(0, 3));
-          logAction('SCAN_COMPLETED', `Analisou ${file.name}`);
-          showToast("Scan concluído!");
+          addLog("Uploading to Async Queue...");
+          // 1. Enviar para a API com TOKEN
+          const res = await fetch(`${API_URL}/scan`, { 
+              method: 'POST', 
+              body: formData,
+              headers: {
+                  'Authorization': `Bearer ${token}` // <--- IMPORTANTE: Envia quem é o user
+              }
+          });
+          
+          if (!res.ok) throw new Error("Upload failed. Verify backend.");
+          
+          const { task_id } = await res.json();
+          addLog(`Queued! Task ID: ${task_id.substring(0,8)}...`);
+          
+          // 2. Polling (Perguntar à API se já acabou)
+          let attempts = 0;
+          const pollInterval = setInterval(async () => {
+              attempts++;
+              const statusRes = await fetch(`${API_URL}/scan/${task_id}`);
+              const statusData = await statusRes.json();
+
+              if (statusData.status === 'completed') {
+                  clearInterval(pollInterval);
+                  const data = statusData.report;
+                  
+                  addLog(`Scan finished! Found ${data.total_issues} issues.`);
+                  
+                  // Agora o Worker do backend já gravou na DB (scans table).
+                  // Nós só precisamos de atualizar o UI.
+                  setLatestScan(data);
+                  setSeverityData([
+                        { name: 'Crítico', count: data.summary.critical, fill: COLORS.critical },
+                        { name: 'Alto', count: data.summary.high, fill: COLORS.high },
+                        { name: 'Médio', count: data.summary.medium, fill: COLORS.medium }
+                  ]);
+                  const fileCounts = {};
+                  data.issues.forEach(i => { fileCounts[i.file] = (fileCounts[i.file] || 0) + 1 });
+                  setTopFiles(Object.entries(fileCounts).sort((a,b) => b[1] - a[1]).slice(0, 3));
+                  
+                  logAction('SCAN_COMPLETED', `Analisou ${file.name}`);
+                  showToast("Scan concluído!");
+              } 
+              else if (statusData.status === 'failed') {
+                  clearInterval(pollInterval);
+                  addLog(`[ERROR] Task failed: ${statusData.error}`);
+                  showToast("Falha no Scan.", "error");
+              }
+              else {
+                  if (attempts % 3 === 0) addLog(`Processing in worker node...`);
+              }
+          }, 2000); 
+
       } catch (error) {
           addLog(`Error: ${error.message}`);
-          showToast("Falha no Scan.", "error");
+          showToast("Erro de conexão.", "error");
       }
   };
 
@@ -256,7 +299,7 @@ export default function Home() {
       if (!securitySettings.timeout) return;
 
       let timeoutId;
-      const TIMEOUT_DURATION = 30 * 60 * 1000; // 30 Minutos
+      const TIMEOUT_DURATION = 30 * 60 * 1000;
 
       const resetTimer = () => {
           if (timeoutId) clearTimeout(timeoutId);
@@ -348,111 +391,51 @@ export default function Home() {
       }
   };
 
-  // --- PROFESSIONAL PDF GENERATOR ---
+  // --- PDF GENERATOR FIXED ---
   const generatePDF = () => {
-    if (!latestScan) return;
+    if (!latestScan) {
+        showToast("Nenhum scan disponível para exportar.", "error");
+        return;
+    }
     const doc = new jsPDF();
     const pageWidth = doc.internal.pageSize.width;
     const today = format(new Date(), 'dd/MM/yyyy HH:mm');
 
-    // 1. CAPA / CABEÇALHO
-    doc.setFillColor(5, 2, 10); // Cor Escura (bgDark)
+    // 1. CAPA
+    doc.setFillColor(5, 2, 10); 
     doc.rect(0, 0, pageWidth, 40, 'F');
-    
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(22);
     doc.setFont("helvetica", "bold");
     doc.text("Sentinel Security Report", 14, 20);
-    
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
     doc.text(`Generated on: ${today}`, 14, 30);
-    doc.text(`Organization: ${orgData?.name || 'Enterprise Tenant'}`, pageWidth - 14, 20, { align: 'right' });
+    const isCritical = latestScan.summary.critical > 0;
     doc.text(`Status: ${isCritical ? 'FALHA (Risco Crítico)' : 'APROVADO'}`, pageWidth - 14, 30, { align: 'right' });
 
-    // 2. EXECUTIVE SUMMARY (Gráfico de texto)
+    // 2. EXECUTIVE SUMMARY
     doc.setTextColor(0, 0, 0);
     doc.setFontSize(14);
     doc.setFont("helvetica", "bold");
     doc.text("1. Executive Summary", 14, 55);
-
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
+    const securityScore = latestScan ? Math.max(0, 100 - (latestScan.summary.critical * 20) - (latestScan.summary.high * 10)) : 100;
     doc.text(`Security Score: ${securityScore}/100`, 14, 65);
     doc.text(`Total Vulnerabilities: ${latestScan.total_issues}`, 14, 72);
     
-    // Caixas de Resumo
-    doc.setDrawColor(200, 200, 200);
-    doc.setFillColor(239, 68, 68); // Red
-    doc.rect(14, 80, 40, 20, 'F');
-    doc.setTextColor(255, 255, 255);
-    doc.text("CRITICAL", 34, 88, { align: 'center' });
-    doc.text(`${latestScan.summary.critical}`, 34, 96, { align: 'center' });
-
-    doc.setFillColor(245, 158, 11); // Amber
-    doc.rect(60, 80, 40, 20, 'F');
-    doc.text("HIGH", 80, 88, { align: 'center' });
-    doc.text(`${latestScan.summary.high}`, 80, 96, { align: 'center' });
-
-    doc.setFillColor(59, 130, 246); // Blue
-    doc.rect(106, 80, 40, 20, 'F');
-    doc.text("MEDIUM", 126, 88, { align: 'center' });
-    doc.text(`${latestScan.summary.medium}`, 126, 96, { align: 'center' });
-
-    // 3. COMPLIANCE MATRIX
-    doc.setTextColor(0, 0, 0);
-    doc.setFontSize(14);
-    doc.setFont("helvetica", "bold");
-    doc.text("2. Compliance Impact", 14, 115);
-    
-    const complianceData = [
-        ['Standard', 'Status', 'Reason'],
-        ['GDPR (Privacy)', isCritical ? 'Review Required' : 'Compliant', isCritical ? 'Critical Secrets Exposed' : 'No PII risks found'],
-        ['SOC 2 (Security)', 'Auditing...', 'Access controls verified'],
-        ['ISO 27001', 'Active', 'Encryption policies enabled']
-    ];
-
+    // 3. TABLE
+    const issuesData = latestScan.issues.map(i => [i.severity, i.name, i.file, `Line: ${i.line}`]);
     autoTable(doc, {
-        startY: 120,
-        head: [complianceData[0]],
-        body: complianceData.slice(1),
-        theme: 'grid',
-        headStyles: { fillColor: [5, 2, 10] },
-        styles: { fontSize: 9 }
-    });
-
-    // 4. DETALHES TÉCNICOS
-    doc.setFontSize(14);
-    doc.setFont("helvetica", "bold");
-    doc.text("3. Technical Findings", 14, doc.lastAutoTable.finalY + 15);
-
-    const issuesData = latestScan.issues.map(i => [
-        i.severity,
-        i.name,
-        i.file,
-        `Line: ${i.line}`
-    ]);
-
-    autoTable(doc, {
-        startY: doc.lastAutoTable.finalY + 20,
+        startY: 90,
         head: [['Severity', 'Vulnerability', 'Location', 'Details']],
         body: issuesData,
         theme: 'striped',
-        headStyles: { fillColor: [79, 70, 229] }, // Indigo
+        headStyles: { fillColor: [79, 70, 229] },
         styles: { fontSize: 8 },
-        columnStyles: {
-            0: { fontStyle: 'bold', textColor: [239, 68, 68] } // Vermelho para severidade
-        }
+        columnStyles: { 0: { fontStyle: 'bold', textColor: [239, 68, 68] } }
     });
-
-    // Footer
-    const pageCount = doc.internal.getNumberOfPages();
-    for(let i = 1; i <= pageCount; i++) {
-        doc.setPage(i);
-        doc.setFontSize(8);
-        doc.setTextColor(150);
-        doc.text(`SentinelScan Confidential - Page ${i} of ${pageCount}`, pageWidth / 2, doc.internal.pageSize.height - 10, { align: 'center' });
-    }
 
     doc.save(`Sentinel_Audit_Report_${format(new Date(), 'yyyyMMdd')}.pdf`);
   };
@@ -478,7 +461,7 @@ export default function Home() {
       <aside className={`w-64 ${theme.sidebar} flex flex-col fixed h-full z-20 shadow-2xl hidden md:flex border-r ${theme.border}`}>
         <div className="p-6 flex items-center gap-3 border-b border-white/5">
           <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-2 rounded-xl shadow-lg shadow-indigo-500/20"><Shield className="w-6 h-6 text-white" /></div>
-          <div><span className="font-bold text-lg tracking-tight block">Sentinel</span><span className="text-[10px] text-indigo-500 font-mono font-bold tracking-widest uppercase">PRO v5.0</span></div>
+          <div><span className="font-bold text-lg tracking-tight block">Sentinel</span><span className="text-[10px] text-indigo-500 font-mono font-bold tracking-widest uppercase">PRO v6.0</span></div>
         </div>
         <nav className="flex-1 p-4 space-y-2 mt-4">
           <MenuButton icon={<LayoutDashboard size={18}/>} label="Dashboard" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} theme={theme}/>
@@ -716,7 +699,7 @@ export default function Home() {
                  <div className="flex gap-4 mb-6">
                      <div className="flex-1">
                         <label className="text-xs font-bold opacity-50 block mb-1">Slack/Teams Webhook</label>
-                        <input type="password" value={slackWebhook} onChange={(e) => setSlackWebhook(e.target.value)} disabled={!isAdmin} placeholder="https://hooks.slack.com/..." className={`w-full p-3 border rounded-lg bg-transparent outline-none focus:border-indigo-500 ${theme.border}`}/>
+                        <input type="password" value={slackWebhook} onChange={(e) => setSlackWebhook(e.target.value)} disabled={!isAdmin} placeholder="[https://hooks.slack.com/](https://hooks.slack.com/)..." className={`w-full p-3 border rounded-lg bg-transparent outline-none focus:border-indigo-500 ${theme.border}`}/>
                      </div>
                      <div className="flex items-end">
                         {isAdmin && <button onClick={handleSaveWebhook} className="bg-slate-900 text-white px-6 py-3 rounded-lg font-bold text-sm">Save</button>}
