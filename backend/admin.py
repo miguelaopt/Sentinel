@@ -1,6 +1,5 @@
 import os
 import time
-import re
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
@@ -19,7 +18,6 @@ KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_SE
 console = Console()
 
 # --- SEGURANÇA: Ler password do .env ---
-# Se não existir no .env, usa "sentinel" por defeito
 SUDO_PASSWORD = os.environ.get("ADMIN_SUDO_PASSWORD", "sentinel")
 
 if not URL or not KEY:
@@ -45,7 +43,7 @@ def clear_screen():
 def print_banner():
     clear_screen()
     console.print(Align.center(f"[bold purple]{BANNER}[/bold purple]"))
-    console.print(Align.center("[bold white on purple]  SENTINEL SCAN ADMIN PANEL  [/bold white on purple]"))
+    console.print(Align.center("[bold white on purple]  SENTINEL USER MANAGER  [/bold white on purple]"))
     console.print("\n")
 
 def sudo_check():
@@ -53,7 +51,6 @@ def sudo_check():
     console.print("\n[bold red]🔒 SUDO REQUIRED[/bold red]")
     password = Prompt.ask("Password de Administrador", password=True)
     
-    # Recarrega a varável para garantir que temos a versão mais recente
     current_pass = os.environ.get("ADMIN_SUDO_PASSWORD", "sentinel")
     
     if password == current_pass:
@@ -65,7 +62,6 @@ def sudo_check():
         return False
 
 def update_env_password(new_password):
-    """Reescreve o ficheiro .env com a nova password"""
     env_path = ".env"
     try:
         with open(env_path, "r") as f:
@@ -86,97 +82,62 @@ def update_env_password(new_password):
         with open(env_path, "w") as f:
             f.writelines(new_lines)
             
-        # Atualiza a variável no processo atual também
         os.environ["ADMIN_SUDO_PASSWORD"] = new_password
         return True
     except Exception as e:
         console.print(f"[red]Erro ao escrever no .env: {e}[/red]")
         return False
 
-# --- NOVA FUNCIONALIDADE: MUDAR PASSWORD ---
 def change_sudo_password():
     print_banner()
     console.print("[bold yellow]>>> ALTERAR PASSWORD SUDO[/bold yellow]")
-    
     if not sudo_check(): return
-
     new_pass = Prompt.ask("Nova Password", password=True)
     confirm_pass = Prompt.ask("Confirme a Password", password=True)
-
     if new_pass != confirm_pass:
         console.print("[red]As passwords não coincidem![/red]")
         time.sleep(2)
         return
-
     if update_env_password(new_pass):
-        console.print(f"[bold green]✅ Password atualizada no ficheiro .env![/bold green]")
-        console.print("[dim]A nova password entra em vigor imediatamente.[/dim]")
+        console.print(f"[bold green]✅ Password atualizada![/bold green]")
     else:
         console.print("[red]Falha ao atualizar password.[/red]")
-    
-    time.sleep(3)
+    time.sleep(2)
 
-# --- FUNÇÕES EXISTENTES (Simplificadas para poupar espaço, mantêm a lógica anterior) ---
+# --- FUNÇÕES DE LISTAGEM ---
 
 def list_users(pause=True):
     try:
-        res = supabase.table("profiles").select("*, organizations(name)").execute()
-        table = Table(title="Utilizadores", border_style="purple")
+        # Simplificado: Não faz join com organizações
+        res = supabase.table("profiles").select("*").execute()
+        
+        table = Table(title="Utilizadores do Sistema", border_style="purple")
         table.add_column("ID", style="dim", no_wrap=True)
         table.add_column("Nome", style="cyan")
         table.add_column("Email", style="green")
         table.add_column("Role", style="magenta")
-        table.add_column("Org", style="yellow")
+        table.add_column("Contacto", style="yellow") # Adicionado contacto visual
+
         for u in res.data:
-            org = u['organizations']['name'] if u.get('organizations') else "N/A"
-            table.add_row(u['id'], u['full_name'], u['email'], u['role'], org)
+            role_style = "[bold red]Admin[/bold red]" if u['role'] == 'Admin' else u['role']
+            table.add_row(
+                u['id'], 
+                u['full_name'], 
+                u['email'], 
+                role_style,
+                f"mailto:{u['email']}"
+            )
         console.print(table)
-    except Exception as e: console.print(f"[red]{e}[/red]")
+    except Exception as e: console.print(f"[red]Erro: {e}[/red]")
     if pause: Prompt.ask("\n[dim]Enter para voltar...[/dim]")
 
-def list_organizations(pause=True):
-    try:
-        res = supabase.table("organizations").select("*").execute()
-        table = Table(title="Organizações", border_style="blue")
-        table.add_column("ID", style="dim")
-        table.add_column("Nome", style="cyan")
-        for org in res.data: table.add_row(org['id'], org['name'])
-        console.print(table)
-    except Exception as e: console.print(f"[red]{e}[/red]")
-    if pause: Prompt.ask("\n[dim]Enter para voltar...[/dim]")
-
-def add_organization():
-    print_banner()
-    console.print("[green]ADD ORG[/green]")
-    name = Prompt.ask("Nome")
-    if sudo_check():
-        try:
-            supabase.table("organizations").insert({"name": name}).execute()
-            console.print("[green]Sucesso![/green]")
-        except Exception as e: console.print(f"[red]{e}[/red]")
-        time.sleep(2)
-
-def remove_organization():
-    print_banner()
-    list_organizations(pause=False)
-    console.print("[red]REMOVE ORG[/red]")
-    oid = Prompt.ask("ID")
-    if sudo_check():
-        try:
-            supabase.table("organizations").delete().eq("id", oid).execute()
-            console.print("[green]Removido![/green]")
-        except Exception as e: console.print(f"[red]{e}[/red]")
-        time.sleep(2)
+# --- FUNÇÕES DE AÇÃO ---
 
 def add_user():
     print_banner()
     console.print("[bold green]>>> ADICIONAR USER[/bold green]")
     
-    console.print("Selecione a Organização (Opcional - Enter para criar nova automática):")
-    # Nota: Simplifiquei aqui. Se deres Enter, o trigger cria uma org nova.
-    # Se quiseres forçar uma org existente, terias de passar o ID no metadata também,
-    # mas vamos deixar o trigger gerir a org para simplificar.
-    
+    # Não pede Organização. O sistema cria automaticamente.
     email = Prompt.ask("Email")
     password = Prompt.ask("Password", password=True)
     name = Prompt.ask("Nome Completo")
@@ -187,19 +148,19 @@ def add_user():
     try:
         console.print("[dim]Criando utilizador...[/dim]")
         
-        # --- A CORREÇÃO ESTÁ AQUI ---
-        # Passamos o role dentro de user_metadata
-        auth_res = supabase.auth.admin.create_user({
+        # Envia apenas o necessário. O Trigger na DB trata do resto.
+        supabase.auth.admin.create_user({
             "email": email,
             "password": password,
             "email_confirm": True,
             "user_metadata": {
                 "full_name": name,
-                "role": role  # <--- O Trigger vai ler isto!
+                "role": role
+                # org_id foi removido. O SQL vai criar uma org pessoal automática.
             }
         })
         
-        console.print(f"[bold green]✅ Utilizador {email} criado com sucesso como {role}![/bold green]")
+        console.print(f"[bold green]✅ Utilizador {email} criado com sucesso![/bold green]")
         time.sleep(2)
         
     except Exception as e:
@@ -209,13 +170,17 @@ def add_user():
 def remove_user():
     print_banner()
     list_users(pause=False)
-    uid = Prompt.ask("ID do User")
-    if sudo_check():
-        try:
-            supabase.auth.admin.delete_user(uid)
-            console.print("[green]User Removido![/green]")
-        except Exception as e: console.print(f"[red]{e}[/red]")
-        time.sleep(2)
+    console.print("\n[bold red]>>> REMOVER USER[/bold red]")
+    uid = Prompt.ask("ID do User para APAGAR")
+    
+    if not sudo_check(): return
+
+    try:
+        supabase.auth.admin.delete_user(uid)
+        console.print("[bold green]✅ Utilizador removido permanentemente![/bold green]")
+    except Exception as e: 
+        console.print(f"[red]Erro: {e}[/red]")
+    time.sleep(2)
 
 # --- MENU PRINCIPAL ---
 
@@ -229,30 +194,22 @@ def main_menu():
 
         menu.add_row("[1]", "Adicionar User")
         menu.add_row("[2]", "Remover User")
-        menu.add_row("[3]", "Adicionar Organização")
-        menu.add_row("[4]", "Remover Organização")
         menu.add_row("", "")
-        menu.add_row("[5]", "Listar Users")
-        menu.add_row("[6]", "Listar Organizações")
+        menu.add_row("[3]", "Listar Users")
         menu.add_row("", "")
-        menu.add_row("[7]", "[yellow]Mudar Password Sudo[/yellow]")
+        menu.add_row("[4]", "[yellow]Mudar Password Sudo[/yellow]")
         menu.add_row("[0]", "[red]Sair[/red]")
 
         console.print(Panel(menu, title="Menu de Comando", border_style="purple", expand=False))
 
-        choice = Prompt.ask("Selecione", choices=["1", "2", "3", "4", "5", "6", "7", "0"])
+        choice = Prompt.ask("Selecione", choices=["1", "2", "3", "4", "0"])
 
         if choice == "1": add_user()
         elif choice == "2": remove_user()
-        elif choice == "3": add_organization()
-        elif choice == "4": remove_organization()
-        elif choice == "5": 
+        elif choice == "3": 
             print_banner()
             list_users()
-        elif choice == "6": 
-            print_banner()
-            list_organizations()
-        elif choice == "7": change_sudo_password()
+        elif choice == "4": change_sudo_password()
         elif choice == "0": break
 
 if __name__ == "__main__":
