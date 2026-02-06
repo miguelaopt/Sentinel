@@ -1,24 +1,27 @@
 name: 'SentinelScan Security'
 description: 'Verifica automaticamente vulnerabilidades e segredos expostos no código.'
-author: 'Teu Nome'
+author: 'Miguel Ferreira'
 branding:
   icon: 'shield'
   color: 'blue'
 
 inputs:
   target-dir:
-    description: 'A pasta que deve ser analisada'
-    required: false
+    description: 'Directory to scan'
+    required: true
     default: '.'
   output-file:
-    description: 'Nome do ficheiro de relatório'
+    description: 'Output file for report'
     required: false
-    default: 'report.json'
+    default: 'security_report.json'
 
 runs:
   using: 'docker'
   image: 'Dockerfile'
+  # O segredo está aqui: Forçamos o uso do Python e do script main.py
+  entrypoint: 'python'
   args:
+    - '/app/main.py'
     - ${{ inputs.target-dir }}
     - '--output'
     - ${{ inputs.output-file }}
