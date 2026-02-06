@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  /* config options here */
+  output: 'standalone', // <--- ADICIONA ESTA LINHA
   reactCompiler: true,
 };
 

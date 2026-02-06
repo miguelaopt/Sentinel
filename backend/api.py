@@ -10,11 +10,19 @@ from core.tasks import scan_code_task
 from celery.result import AsyncResult
 from pydantic import BaseModel
 import google.generativeai as genai
+from core.integrations import generate_issue_hash
+from core.security import encrypt_data
 
 # --- CONFIGURAÇÃO ---
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+class JiraRequest(BaseModel):
+    domain: str
+    email: str
+    token: str
+    project_key: str
 
 app = FastAPI(title="Sentinel Enterprise API")
 
@@ -77,6 +85,39 @@ async def get_current_org_id(
 def health_check():
     return {"status": "Sentinel Enterprise System Operational"}
 
+@app.post("/settings/jira")
+async def save_jira(
+    req: JiraRequest, 
+    org_id: str = Depends(get_current_org_id)
+):
+    if not org_id: raise HTTPException(401, "Unauthorized")
+    
+    # Encriptar apenas o token
+    token_enc = encrypt_data(req.token)
+    
+    config_data = {
+        "domain": req.domain,
+        "email": req.email,
+        "project_key": req.project_key,
+        "token_encrypted": token_enc
+    }
+    
+    # Upsert na tabela integrations
+    existing = supabase.table("integrations").select("*").eq("org_id", org_id).eq("type", "jira").execute()
+    
+    if existing.data:
+        uid = existing.data[0]['id']
+        supabase.table("integrations").update({"config": config_data, "enabled": True}).eq("id", uid).execute()
+    else:
+        supabase.table("integrations").insert({
+            "org_id": org_id,
+            "type": "jira",
+            "config": config_data,
+            "enabled": True
+        }).execute()
+        
+    return {"status": "updated", "message": "Jira integration active."}
+
 @app.post("/scan")
 async def start_scan(
     file: UploadFile = File(...), 
@@ -135,3 +176,75 @@ def fix_code_ai(req: FixRequest):
         return {"fixed_code": response.text.replace("```", "")}
     except Exception as e:
         return {"fixed_code": "AI Error."}
+
+class WebhookRequest(BaseModel):
+    url: str
+
+@app.post("/settings/webhook")
+async def save_webhook(
+    req: WebhookRequest, 
+    org_id: str = Depends(get_current_org_id)
+):
+    if not org_id: raise HTTPException(401, "Unauthorized")
+    
+    # 1. Encriptar URL
+    url_enc = encrypt_data(req.url)
+    
+    # 2. Guardar na tabela 'integrations' via Supabase
+    # Verifica se já existe um webhook para esta org e atualiza, ou cria novo
+    existing = supabase.table("integrations").select("*").eq("org_id", org_id).eq("type", "webhook").execute()
+    
+    config_data = {"url_encrypted": url_enc}
+    
+    if existing.data:
+        # Update
+        uid = existing.data[0]['id']
+        supabase.table("integrations").update({"config": config_data, "enabled": True}).eq("id", uid).execute()
+    else:
+        # Insert
+        supabase.table("integrations").insert({
+            "org_id": org_id,
+            "type": "webhook",
+            "config": config_data,
+            "enabled": True
+        }).execute()
+        
+    return {"status": "updated", "message": "Webhook secure and active."}
+
+class IgnoreRequest(BaseModel):
+    file: str
+    rule_id: str
+    snippet: str
+    reason: str
+
+@app.post("/issues/ignore")
+async def ignore_issue_endpoint(
+    req: IgnoreRequest,
+    user_token: str = Header(None, alias="Authorization"), # Para saber quem ignorou
+    org_id: str = Depends(get_current_org_id)
+):
+    if not org_id: raise HTTPException(401, "Unauthorized")
+    
+    # Gerar Hash consistente
+    issue_obj = {"file": req.file, "id": req.rule_id, "snippet": req.snippet}
+    ihash = generate_issue_hash(issue_obj)
+    
+    # Obter ID do user através do token
+    user_id = None
+    if user_token:
+        try:
+            user = supabase.auth.get_user(user_token.replace("Bearer ", ""))
+            user_id = user.user.id
+        except: pass
+
+    try:
+        supabase.table("ignored_issues").insert({
+            "org_id": org_id,
+            "issue_hash": ihash,
+            "reason": req.reason,
+            "actor_id": user_id
+        }).execute()
+        return {"status": "ignored", "hash": ihash}
+    except Exception as e:
+        # Se já existir (duplicado), não faz mal
+        return {"status": "exists", "hash": ihash}

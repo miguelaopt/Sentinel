@@ -1,23 +1,6 @@
-# --- Python (Backend) ---
-backend/venv/
-backend/__pycache__/
-backend/*.pyc
-backend/.env
-backend/report.json
-
-# --- Node (Frontend) ---
-frontend/node_modules/
-frontend/.next/
-frontend/.env.local
-frontend/out/
-
-# --- Sistema ---
-.DS_Store
-.vscode/
-
-# Segredos e Ambientes
+node_modules
+.next
+__pycache__
 .env
-.env.local
-.env.*
-backend/.env
-frontend/.env.local
+.DS_Store
+sentinel_uploads

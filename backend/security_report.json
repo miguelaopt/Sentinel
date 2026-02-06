@@ -1,17 +1,62 @@
 {
-    "scan_timestamp": "2026-02-05T16:06:06.724904",
-    "total_issues": 1,
+    "scan_timestamp": "2026-02-06T19:07:09.945377",
+    "total_issues": 4,
     "issues": [
         {
+            "id": "DOCKER_ROOT",
             "file": ".\\Dockerfile",
             "line": 1,
-            "name": "Docker: Running as Root",
+            "name": "Docker: Running as Root (User not defined)",
             "severity": "ALTO",
-            "snippet": "Missing USER instruction"
+            "snippet": "N/A",
+            "compliance": {
+                "standard": "CIS Docker Benchmark",
+                "control": "4.1 - Ensure a user for the container has been created",
+                "risk": "Medium: Container breakout risk (Root Privilege)."
+            }
+        },
+        {
+            "id": "AWS_KEY",
+            "file": ".\\report.json",
+            "line": 19,
+            "name": "AWS Access Key",
+            "severity": "CRITICO",
+            "snippet": "\"snippet\": \"aws_secret = \\\"AKIAIOSFODNN7EXAMPLE\\\"\"",
+            "compliance": {
+                "standard": "ISO 27001",
+                "control": "A.10.1.1 - Policy on use of cryptographic controls",
+                "risk": "Critical: Unrestricted access to cloud infrastructure."
+            }
+        },
+        {
+            "id": "AWS_KEY",
+            "file": ".\\report.json",
+            "line": 27,
+            "name": "AWS Access Key",
+            "severity": "CRITICO",
+            "snippet": "\"snippet\": \"aws_secret = \\\"AKIAIOSFODNN7EXAMPLE\\\"\"",
+            "compliance": {
+                "standard": "ISO 27001",
+                "control": "A.10.1.1 - Policy on use of cryptographic controls",
+                "risk": "Critical: Unrestricted access to cloud infrastructure."
+            }
+        },
+        {
+            "id": "PRIVATE_KEY",
+            "file": ".\\core\\scanner.py",
+            "line": 15,
+            "name": "SSH Private Key",
+            "severity": "CRITICO",
+            "snippet": "{\"id\": \"PRIVATE_KEY\", \"name\": \"SSH Private Key\", \"pattern\": r\"-----BEGIN OPENSSH PRIVATE KEY-----\", ",
+            "compliance": {
+                "standard": "General Best Practice",
+                "control": "N/A",
+                "risk": "Unknown risk level."
+            }
         }
     ],
     "summary": {
-        "critical": 0,
+        "critical": 3,
         "high": 1,
         "medium": 0
     }

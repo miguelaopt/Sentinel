@@ -14,10 +14,11 @@ import {
   Moon, Sun, Sliders, Lock, Play, BarChart3, Clock, Terminal, FileWarning, Mail, Fingerprint, LogIn
 } from 'lucide-react';
 import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable'; // Certifica-te que instalaste: npm install jspdf-autotable
+import autoTable from 'jspdf-autotable';
 import { format } from 'date-fns';
 
-const API_URL = '[https://sentinel-api-rr8s.onrender.com](https://sentinel-api-rr8s.onrender.com)'; // Ou localhost:8000 se local
+// Configuração da API (Localhost para Docker / Cloud para Prod)
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 // --- COLORS PALETTE ---
 const COLORS = {
@@ -108,6 +109,9 @@ export default function Home() {
   const [userProfile, setUserProfile] = useState(null);
   const [darkMode, setDarkMode] = useState(false);
   const [terminalLogs, setTerminalLogs] = useState(["> Sentinel Core v6.0 initialized...", "> Async Queue System ready."]);
+
+  // Estados para Jira
+  const [jiraConfig, setJiraConfig] = useState({ domain: '', email: '', token: '', project_key: '' });
   
   // Settings States
   const [notifications, setNotifications] = useState({ email: false, slack: false });
@@ -170,6 +174,20 @@ export default function Home() {
 
   const handleScanClick = () => { if (fileInputRef.current) fileInputRef.current.click(); };
 
+  const handleSaveJira = async () => {
+    if (!isAdmin) { showToast('Apenas Admins.', 'error'); return; }
+    try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const res = await fetch(`${API_URL}/settings/jira`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+            body: JSON.stringify(jiraConfig)
+        });
+        if (!res.ok) throw new Error("Erro ao salvar Jira.");
+        showToast('Integração Jira salva!');
+    } catch (e) { showToast(e.message, 'error'); }
+  };
+
   // --- ASYNC SCAN LOGIC (CORRIGIDA COM AUTENTICAÇÃO) ---
   const handleFileUpload = async (event) => {
       const file = event.target.files[0];
@@ -193,7 +211,7 @@ export default function Home() {
               method: 'POST', 
               body: formData,
               headers: {
-                  'Authorization': `Bearer ${token}` // <--- IMPORTANTE: Envia quem é o user
+                  'Authorization': `Bearer ${token}`
               }
           });
           
@@ -202,7 +220,7 @@ export default function Home() {
           const { task_id } = await res.json();
           addLog(`Queued! Task ID: ${task_id.substring(0,8)}...`);
           
-          // 2. Polling (Perguntar à API se já acabou)
+          // 2. Polling
           let attempts = 0;
           const pollInterval = setInterval(async () => {
               attempts++;
@@ -215,8 +233,6 @@ export default function Home() {
                   
                   addLog(`Scan finished! Found ${data.total_issues} issues.`);
                   
-                  // Agora o Worker do backend já gravou na DB (scans table).
-                  // Nós só precisamos de atualizar o UI.
                   setLatestScan(data);
                   setSeverityData([
                         { name: 'Crítico', count: data.summary.critical, fill: COLORS.critical },
@@ -339,7 +355,42 @@ export default function Home() {
 
   // --- HANDLERS ---
   const handleAiFix = (issue) => { setSelectedIssueForAi(issue); setAiModalOpen(true); logAction('AI_FIX_REQ', `Gemini analisou ${issue.name}`); };
-  const handleIgnoreIssue = (name) => { setIgnoredIssues([...ignoredIssues, name]); logAction('IGNORED', `Ignorou ${name}`); showToast('Vulnerabilidade silenciada.'); };
+  
+  // --- HANDLE IGNORE ISSUE (ATUALIZADO) ---
+  const handleIgnoreIssue = async (issue) => {
+      if (!confirm("Tem a certeza que quer ignorar este risco para toda a equipa?")) return;
+
+      try {
+          const { data: { session } } = await supabase.auth.getSession();
+          const res = await fetch(`${API_URL}/issues/ignore`, {
+              method: 'POST',
+              headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${session?.access_token}`
+              },
+              body: JSON.stringify({
+                  file: issue.file,
+                  rule_id: issue.id || 'unknown',
+                  snippet: issue.snippet,
+                  reason: "Marcado como Risco Aceite no Dashboard"
+              })
+          });
+
+          if (!res.ok) throw new Error("Erro ao ignorar.");
+          
+          setIgnoredIssues([...ignoredIssues, issue.name]); 
+          showToast('Vulnerabilidade silenciada permanentemente.');
+          logAction('IGNORED', `Ignorou ${issue.name}`);
+          
+          if (latestScan) {
+              const newIssues = latestScan.issues.filter(i => i !== issue);
+              setLatestScan({...latestScan, issues: newIssues});
+          }
+
+      } catch (e) {
+          showToast("Erro ao conectar ao servidor.", "error");
+      }
+  };
   
   const handleTogglePolicy = async (key) => {
       if (!isAdmin) { showToast('Apenas Admins.', 'error'); return; }
@@ -371,10 +422,27 @@ export default function Home() {
       }
   };
 
+  // --- HANDLE SAVE WEBHOOK (ATUALIZADO) ---
   const handleSaveWebhook = async () => {
     if (!isAdmin) { showToast('Apenas Admins.', 'error'); return; }
-    await supabase.from('profiles').update({ slack_webhook: slackWebhook }).eq('id', userProfile.id);
-    showToast('Webhook gravado!');
+    
+    try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const res = await fetch(`${API_URL}/settings/webhook`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${session?.access_token}`
+            },
+            body: JSON.stringify({ url: slackWebhook })
+        });
+        
+        if (!res.ok) throw new Error("Falha ao salvar webhook seguro.");
+        showToast('Webhook encriptado e gravado!');
+        logAction('SETTINGS_UPDATE', 'Atualizou Webhook de Segurança');
+    } catch (e) {
+        showToast(e.message, 'error');
+    }
   };
 
   const handleGenerateKey = async () => { 
@@ -391,27 +459,26 @@ export default function Home() {
       }
   };
 
-  // --- PDF GENERATOR FIXED ---
+  // --- PROFESSIONAL PDF GENERATOR ---
   const generatePDF = () => {
-    if (!latestScan) {
-        showToast("Nenhum scan disponível para exportar.", "error");
-        return;
-    }
+    if (!latestScan) return;
     const doc = new jsPDF();
     const pageWidth = doc.internal.pageSize.width;
     const today = format(new Date(), 'dd/MM/yyyy HH:mm');
 
-    // 1. CAPA
+    // 1. CAPA / CABEÇALHO
     doc.setFillColor(5, 2, 10); 
     doc.rect(0, 0, pageWidth, 40, 'F');
+    
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(22);
     doc.setFont("helvetica", "bold");
     doc.text("Sentinel Security Report", 14, 20);
+    
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
     doc.text(`Generated on: ${today}`, 14, 30);
-    const isCritical = latestScan.summary.critical > 0;
+    const isCritical = latestScan?.summary.critical > 0;
     doc.text(`Status: ${isCritical ? 'FALHA (Risco Crítico)' : 'APROVADO'}`, pageWidth - 14, 30, { align: 'right' });
 
     // 2. EXECUTIVE SUMMARY
@@ -419,28 +486,35 @@ export default function Home() {
     doc.setFontSize(14);
     doc.setFont("helvetica", "bold");
     doc.text("1. Executive Summary", 14, 55);
+
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
     const securityScore = latestScan ? Math.max(0, 100 - (latestScan.summary.critical * 20) - (latestScan.summary.high * 10)) : 100;
     doc.text(`Security Score: ${securityScore}/100`, 14, 65);
     doc.text(`Total Vulnerabilities: ${latestScan.total_issues}`, 14, 72);
     
-    // 3. TABLE
-    const issuesData = latestScan.issues.map(i => [i.severity, i.name, i.file, `Line: ${i.line}`]);
+    // 3. TABELA
+    const issuesData = latestScan.issues.map(i => [
+        i.severity,
+        i.name,
+        i.file,
+        `Line: ${i.line}`
+    ]);
+
     autoTable(doc, {
         startY: 90,
         head: [['Severity', 'Vulnerability', 'Location', 'Details']],
         body: issuesData,
         theme: 'striped',
-        headStyles: { fillColor: [79, 70, 229] },
+        headStyles: { fillColor: [79, 70, 229] }, 
         styles: { fontSize: 8 },
-        columnStyles: { 0: { fontStyle: 'bold', textColor: [239, 68, 68] } }
+        columnStyles: {
+            0: { fontStyle: 'bold', textColor: [239, 68, 68] } 
+        }
     });
 
     doc.save(`Sentinel_Audit_Report_${format(new Date(), 'yyyyMMdd')}.pdf`);
   };
-
-  const handleContact = (email) => { window.location.href = `mailto:${email}`; };
 
   if (loading) return <div className={`flex h-screen items-center justify-center ${theme.bg}`}><Loader2 className="animate-spin w-12 h-12 text-indigo-600"/></div>;
   
@@ -658,7 +732,7 @@ export default function Home() {
                              }`}>{issue.severity}</span>
                              <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                 <button onClick={() => handleAiFix(issue)} className="flex items-center gap-1 px-3 py-1.5 bg-indigo-500/10 text-indigo-500 text-xs font-bold rounded hover:bg-indigo-500/20 border border-indigo-500/20 transition-all"><Wand2 size={14}/> AI Fix</button>
-                                <button onClick={() => handleIgnoreIssue(issue.name)} className={`flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded transition-colors border ${darkMode ? 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-500 hover:bg-slate-200'}`}><EyeOff size={14}/> Ignore</button>
+                                <button onClick={() => handleIgnoreIssue(issue)} className={`flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded transition-colors border ${darkMode ? 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-500 hover:bg-slate-200'}`}><EyeOff size={14}/> Ignore</button>
                              </div>
                           </div>
                       </div>
@@ -694,12 +768,37 @@ export default function Home() {
               {/* INTEGRATIONS & CI/CD */}
               <div className={`p-8 rounded-2xl border ${theme.card} ${theme.border}`}>
                  <h3 className="font-bold text-lg mb-6 flex items-center gap-2"><Zap className="text-indigo-500" size={20}/> CI/CD & Integrations</h3>
+                 {/* JIRA INTEGRATION */}
+              <div className={`p-8 rounded-2xl border ${theme.card} ${theme.border}`}>
+                 <h3 className="font-bold text-lg mb-6 flex items-center gap-2"><Globe className="text-indigo-500" size={20}/> Jira Software</h3>
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                     <div>
+                        <label className="text-xs font-bold opacity-50 block mb-1">Jira Domain (ex: company.atlassian.net)</label>
+                        <input value={jiraConfig.domain} onChange={e => setJiraConfig({...jiraConfig, domain: e.target.value})} className={`w-full p-3 border rounded-lg bg-transparent outline-none focus:border-indigo-500 ${theme.border}`}/>
+                     </div>
+                     <div>
+                        <label className="text-xs font-bold opacity-50 block mb-1">Project Key (ex: SEC)</label>
+                        <input value={jiraConfig.project_key} onChange={e => setJiraConfig({...jiraConfig, project_key: e.target.value})} className={`w-full p-3 border rounded-lg bg-transparent outline-none focus:border-indigo-500 ${theme.border}`}/>
+                     </div>
+                     <div>
+                        <label className="text-xs font-bold opacity-50 block mb-1">User Email</label>
+                        <input value={jiraConfig.email} onChange={e => setJiraConfig({...jiraConfig, email: e.target.value})} className={`w-full p-3 border rounded-lg bg-transparent outline-none focus:border-indigo-500 ${theme.border}`}/>
+                     </div>
+                     <div>
+                        <label className="text-xs font-bold opacity-50 block mb-1">API Token</label>
+                        <input type="password" value={jiraConfig.token} onChange={e => setJiraConfig({...jiraConfig, token: e.target.value})} className={`w-full p-3 border rounded-lg bg-transparent outline-none focus:border-indigo-500 ${theme.border}`}/>
+                     </div>
+                 </div>
+                 <div className="mt-4 flex justify-end">
+                    {isAdmin && <button onClick={handleSaveJira} className="bg-slate-900 text-white px-6 py-3 rounded-lg font-bold text-sm">Enable Jira Tickets</button>}
+                 </div>
+              </div>
                  
                  {/* Webhook existente */}
                  <div className="flex gap-4 mb-6">
                      <div className="flex-1">
                         <label className="text-xs font-bold opacity-50 block mb-1">Slack/Teams Webhook</label>
-                        <input type="password" value={slackWebhook} onChange={(e) => setSlackWebhook(e.target.value)} disabled={!isAdmin} placeholder="[https://hooks.slack.com/](https://hooks.slack.com/)..." className={`w-full p-3 border rounded-lg bg-transparent outline-none focus:border-indigo-500 ${theme.border}`}/>
+                        <input type="password" value={slackWebhook} onChange={(e) => setSlackWebhook(e.target.value)} disabled={!isAdmin} placeholder="https://hooks.slack.com/..." className={`w-full p-3 border rounded-lg bg-transparent outline-none focus:border-indigo-500 ${theme.border}`}/>
                      </div>
                      <div className="flex items-end">
                         {isAdmin && <button onClick={handleSaveWebhook} className="bg-slate-900 text-white px-6 py-3 rounded-lg font-bold text-sm">Save</button>}

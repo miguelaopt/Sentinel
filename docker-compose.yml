@@ -1,54 +1,64 @@
 version: '3.8'
 
 services:
-  # --- 1. REDIS (A Fila) ---
+  # --- 1. REDIS ---
   redis:
     image: redis:alpine
     container_name: sentinel_redis
     ports:
       - "6379:6379"
+    restart: always
 
-  # --- 2. API (A Rececionista) ---
+  # --- 2. API (BACKEND) ---
   sentinel-api:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: sentinel_core
+    command: uvicorn api:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"
     environment:
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
-      - ADMIN_SUDO_PASSWORD=${ADMIN_SUDO_PASSWORD}
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      # Configurações do Backend
+      ADMIN_SUDO_PASSWORD: "sentinel123"
+      CELERY_BROKER_URL: "redis://redis:6379/0"
+      CELERY_RESULT_BACKEND: "redis://redis:6379/0"
+      
+      # Chaves Externas (PREENCHE A GEMINI!)
+      GEMINI_API_KEY: "AIzaSyCoIoGFyTTISDzhTCAtJfzAu-6a1i4Ak5I"
+      
+      # Supabase (Service Role é segura aqui no backend)
+      SUPABASE_URL: "https://lqlrorubsltkihievgui.supabase.co"
+      SUPABASE_SERVICE_ROLE_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxxbHJvcnVic2x0a2loaWV2Z3VpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MDIzMjc2OSwiZXhwIjoyMDg1ODA4NzY5fQ.xWCMD-hsuaMyXFvn-xbY9CY7q06WVOLQFkAOA7bmNB8"
     volumes:
-      - sentinel_uploads:/app/uploads # Partilha pasta de uploads
+      - sentinel_uploads:/app/uploads
+      - ./backend:/app
     depends_on:
       - redis
     restart: always
 
-  # --- 3. WORKER (O Trabalhador) ---
+  # --- 3. WORKER (CELERY) ---
   sentinel-worker:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: sentinel_worker
-    # O comando que inicia o Celery em vez da API
     command: celery -A core.tasks worker --loglevel=info
     environment:
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      # O Worker precisa das mesmas chaves do Supabase para gravar na DB
+      CELERY_BROKER_URL: "redis://redis:6379/0"
+      CELERY_RESULT_BACKEND: "redis://redis:6379/0"
+      SUPABASE_URL: "https://lqlrorubsltkihievgui.supabase.co"
+      SUPABASE_SERVICE_ROLE_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxxbHJvcnVic2x0a2loaWV2Z3VpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MDIzMjc2OSwiZXhwIjoyMDg1ODA4NzY5fQ.xWCMD-hsuaMyXFvn-xbY9CY7q06WVOLQFkAOA7bmNB8"
     volumes:
-      - sentinel_uploads:/app/uploads # Lê da mesma pasta
+      - sentinel_uploads:/app/uploads
+      - ./backend:/app
     depends_on:
       - redis
       - sentinel-api
     restart: always
 
-  # --- 4. FRONTEND ---
+  # --- 4. DASHBOARD (FRONTEND) ---
   sentinel-dashboard:
     build:
       context: ./frontend
@@ -57,9 +67,13 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
-      - NEXT_PUBLIC_SUPABASE_URL=${SUPABASE_URL}
-      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      # Variáveis públicas para o React
+      NEXT_PUBLIC_API_URL: "http://localhost:8000"
+      NEXT_PUBLIC_SUPABASE_URL: "https://lqlrorubsltkihievgui.supabase.co"
+      
+      # ⚠️ IMPORTANTE: COLOCA AQUI A TUA ANON KEY DO SUPABASE
+      # (Sem isto o Login não funciona!)
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxxbHJvcnVic2x0a2loaWV2Z3VpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAyMzI3NjksImV4cCI6MjA4NTgwODc2OX0.W1_kcxZLUbsnppLEzin54-nixbxhFMdqwPq7B2iX9Gg"
     depends_on:
       - sentinel-api
     restart: always
