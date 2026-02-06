@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  # --- O CÉREBRO (API) ---
+  sentinel-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sentinel_core
+    ports:
+      - "8000:8000"
+    environment:
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - ADMIN_SUDO_PASSWORD=${ADMIN_SUDO_PASSWORD}
+    restart: always
+
+  # --- A CARA (Dashboard) ---
+  sentinel-dashboard:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sentinel_ui
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_SUPABASE_URL=${SUPABASE_URL}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+    depends_on:
+      - sentinel-api
+    restart: always

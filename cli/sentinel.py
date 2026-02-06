@@ -12,12 +12,27 @@ def zip_code(source_dir, output_filename="source.zip"):
     print(f"📦 Zipping source code from: {source_dir}")
     with zipfile.ZipFile(output_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
         for root, dirs, files in os.walk(source_dir):
-            # Ignorar pastas pesadas/inúteis
-            dirs[:] = [d for d in dirs if d not in ['.git', 'node_modules', 'venv', '__pycache__']]
+            # --- CORREÇÃO AQUI ---
+            # Adicionámos '.next', 'dist', 'build', 'out' para evitar erros de permissão e poupar espaço
+            dirs[:] = [d for d in dirs if d not in [
+                '.git', 'node_modules', 'venv', '__pycache__', 
+                '.next', 'dist', 'build', 'out','report.json','security_report.json'
+            ]]
+            
             for file in files:
+                # Ignorar ficheiros de sistema ou logs
+                if file in ['.DS_Store', 'npm-debug.log', 'yarn-error.log']:
+                    continue
+                    
                 file_path = os.path.join(root, file)
                 arcname = os.path.relpath(file_path, source_dir)
-                zipf.write(file_path, arcname)
+                try:
+                    zipf.write(file_path, arcname)
+                except PermissionError:
+                    print(f"⚠️  Skipping locked file: {file_path}")
+                except Exception as e:
+                    print(f"⚠️  Error zipping {file_path}: {e}")
+                    
     return output_filename
 
 def run_scan(api_key, zip_file, project_name):

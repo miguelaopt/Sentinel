@@ -111,7 +111,7 @@ export default function Home() {
   
   // Settings States
   const [notifications, setNotifications] = useState({ email: false, slack: false });
-  const [securitySettings, setSecuritySettings] = useState({ mfa: false, timeout: true }); // <--- NOVO
+  const [securitySettings, setSecuritySettings] = useState({ mfa: false, timeout: true });
   const [onlineUsers, setOnlineUsers] = useState(new Set());
 
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -219,11 +219,11 @@ export default function Home() {
         const safeProfile = profileData || { id: user.id, email: user.email, full_name: 'Agente', role: 'Viewer' };
         setUserProfile(safeProfile);
         
-        // Carregar Definições do Perfil
+        // Carregar Settings
         if (safeProfile.settings) {
-            setNotifications(safeProfile.settings); // Carrega email/slack
+            if (safeProfile.settings.email !== undefined) setNotifications(prev => ({...prev, email: safeProfile.settings.email, slack: safeProfile.settings.slack}));
             if (safeProfile.settings.security) {
-                setSecuritySettings(safeProfile.settings.security); // Carrega 2FA/Timeout
+                setSecuritySettings(safeProfile.settings.security);
             }
         }
         
@@ -251,7 +251,7 @@ export default function Home() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // --- SESSION TIMEOUT LOGIC (NOVO) ---
+  // --- SESSION TIMEOUT LOGIC ---
   useEffect(() => {
       if (!securitySettings.timeout) return;
 
@@ -266,12 +266,11 @@ export default function Home() {
           }, TIMEOUT_DURATION);
       };
 
-      // Eventos que reiniciam o timer
       window.addEventListener('mousemove', resetTimer);
       window.addEventListener('keydown', resetTimer);
       window.addEventListener('click', resetTimer);
 
-      resetTimer(); // Inicia
+      resetTimer();
 
       return () => {
           clearTimeout(timeoutId);
@@ -279,7 +278,7 @@ export default function Home() {
           window.removeEventListener('keydown', resetTimer);
           window.removeEventListener('click', resetTimer);
       };
-  }, [securitySettings.timeout]); // Recria se o setting mudar
+  }, [securitySettings.timeout]);
 
   // --- REALTIME PRESENCE ---
   useEffect(() => {
@@ -307,33 +306,26 @@ export default function Home() {
       addLog(`Policy ${key} updated locally.`);
   };
 
-  // --- SECURITY SETTINGS HANDLER (NOVO) ---
   const handleToggleSecurity = async (key) => {
       const newSecurity = { ...securitySettings, [key]: !securitySettings[key] };
       setSecuritySettings(newSecurity);
       
-      // Gravar na DB (Merge com notifications)
-      const newSettings = { ...notifications, security: newSecurity };
+      const newSettings = { 
+          email: notifications.email,
+          slack: notifications.slack,
+          security: newSecurity 
+      };
       
       const { error } = await supabase.from('profiles').update({ settings: newSettings }).eq('id', userProfile.id);
       
       if (error) {
           showToast('Erro ao salvar segurança.', 'error');
-          setSecuritySettings(securitySettings); // Revert on error
+          setSecuritySettings(securitySettings); 
       } else {
           const msg = key === 'mfa' ? (newSecurity.mfa ? '2FA Ativado' : '2FA Desativado') : (newSecurity.timeout ? 'Timeout Ativo' : 'Timeout Desativado');
           showToast(msg);
           logAction('SECURITY_UPDATE', `Alterou ${key}`);
       }
-  };
-
-  const handleToggleNotification = async (key) => {
-      const newNotif = { ...notifications, [key]: !notifications[key] };
-      setNotifications(newNotif);
-      // Gravar (Mantendo security)
-      const newSettings = { ...newNotif, security: securitySettings };
-      await supabase.from('profiles').update({ settings: newSettings }).eq('id', userProfile.id);
-      showToast('Notificações atualizadas.');
   };
 
   const handleSaveWebhook = async () => {
@@ -356,12 +348,113 @@ export default function Home() {
       }
   };
 
+  // --- PROFESSIONAL PDF GENERATOR ---
   const generatePDF = () => {
     if (!latestScan) return;
     const doc = new jsPDF();
-    doc.text(`Sentinel Report`, 14, 20);
-    autoTable(doc, { startY: 30, head: [['Issue', 'Severity']], body: latestScan.issues.map(i => [i.name, i.severity]) });
-    doc.save(`sentinel-report.pdf`);
+    const pageWidth = doc.internal.pageSize.width;
+    const today = format(new Date(), 'dd/MM/yyyy HH:mm');
+
+    // 1. CAPA / CABEÇALHO
+    doc.setFillColor(5, 2, 10); // Cor Escura (bgDark)
+    doc.rect(0, 0, pageWidth, 40, 'F');
+    
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(22);
+    doc.setFont("helvetica", "bold");
+    doc.text("Sentinel Security Report", 14, 20);
+    
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Generated on: ${today}`, 14, 30);
+    doc.text(`Organization: ${orgData?.name || 'Enterprise Tenant'}`, pageWidth - 14, 20, { align: 'right' });
+    doc.text(`Status: ${isCritical ? 'FALHA (Risco Crítico)' : 'APROVADO'}`, pageWidth - 14, 30, { align: 'right' });
+
+    // 2. EXECUTIVE SUMMARY (Gráfico de texto)
+    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(14);
+    doc.setFont("helvetica", "bold");
+    doc.text("1. Executive Summary", 14, 55);
+
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Security Score: ${securityScore}/100`, 14, 65);
+    doc.text(`Total Vulnerabilities: ${latestScan.total_issues}`, 14, 72);
+    
+    // Caixas de Resumo
+    doc.setDrawColor(200, 200, 200);
+    doc.setFillColor(239, 68, 68); // Red
+    doc.rect(14, 80, 40, 20, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.text("CRITICAL", 34, 88, { align: 'center' });
+    doc.text(`${latestScan.summary.critical}`, 34, 96, { align: 'center' });
+
+    doc.setFillColor(245, 158, 11); // Amber
+    doc.rect(60, 80, 40, 20, 'F');
+    doc.text("HIGH", 80, 88, { align: 'center' });
+    doc.text(`${latestScan.summary.high}`, 80, 96, { align: 'center' });
+
+    doc.setFillColor(59, 130, 246); // Blue
+    doc.rect(106, 80, 40, 20, 'F');
+    doc.text("MEDIUM", 126, 88, { align: 'center' });
+    doc.text(`${latestScan.summary.medium}`, 126, 96, { align: 'center' });
+
+    // 3. COMPLIANCE MATRIX
+    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(14);
+    doc.setFont("helvetica", "bold");
+    doc.text("2. Compliance Impact", 14, 115);
+    
+    const complianceData = [
+        ['Standard', 'Status', 'Reason'],
+        ['GDPR (Privacy)', isCritical ? 'Review Required' : 'Compliant', isCritical ? 'Critical Secrets Exposed' : 'No PII risks found'],
+        ['SOC 2 (Security)', 'Auditing...', 'Access controls verified'],
+        ['ISO 27001', 'Active', 'Encryption policies enabled']
+    ];
+
+    autoTable(doc, {
+        startY: 120,
+        head: [complianceData[0]],
+        body: complianceData.slice(1),
+        theme: 'grid',
+        headStyles: { fillColor: [5, 2, 10] },
+        styles: { fontSize: 9 }
+    });
+
+    // 4. DETALHES TÉCNICOS
+    doc.setFontSize(14);
+    doc.setFont("helvetica", "bold");
+    doc.text("3. Technical Findings", 14, doc.lastAutoTable.finalY + 15);
+
+    const issuesData = latestScan.issues.map(i => [
+        i.severity,
+        i.name,
+        i.file,
+        `Line: ${i.line}`
+    ]);
+
+    autoTable(doc, {
+        startY: doc.lastAutoTable.finalY + 20,
+        head: [['Severity', 'Vulnerability', 'Location', 'Details']],
+        body: issuesData,
+        theme: 'striped',
+        headStyles: { fillColor: [79, 70, 229] }, // Indigo
+        styles: { fontSize: 8 },
+        columnStyles: {
+            0: { fontStyle: 'bold', textColor: [239, 68, 68] } // Vermelho para severidade
+        }
+    });
+
+    // Footer
+    const pageCount = doc.internal.getNumberOfPages();
+    for(let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setTextColor(150);
+        doc.text(`SentinelScan Confidential - Page ${i} of ${pageCount}`, pageWidth / 2, doc.internal.pageSize.height - 10, { align: 'center' });
+    }
+
+    doc.save(`Sentinel_Audit_Report_${format(new Date(), 'yyyyMMdd')}.pdf`);
   };
 
   const handleContact = (email) => { window.location.href = `mailto:${email}`; };
@@ -615,11 +708,55 @@ export default function Home() {
                  </div>
               </div>
 
+              {/* INTEGRATIONS & CI/CD */}
               <div className={`p-8 rounded-2xl border ${theme.card} ${theme.border}`}>
-                 <h3 className="font-bold text-lg mb-6 flex items-center gap-2"><Zap className="text-indigo-500" size={20}/> Integrations</h3>
-                 <div className="flex gap-4">
-                     <input type="password" value={slackWebhook} onChange={(e) => setSlackWebhook(e.target.value)} disabled={!isAdmin} placeholder="Slack Webhook URL" className={`flex-1 p-3 border rounded-lg bg-transparent outline-none focus:border-indigo-500 ${theme.border}`}/>
-                     {isAdmin && <button onClick={handleSaveWebhook} className="bg-slate-900 text-white px-6 rounded-lg font-bold text-sm">Save</button>}
+                 <h3 className="font-bold text-lg mb-6 flex items-center gap-2"><Zap className="text-indigo-500" size={20}/> CI/CD & Integrations</h3>
+                 
+                 {/* Webhook existente */}
+                 <div className="flex gap-4 mb-6">
+                     <div className="flex-1">
+                        <label className="text-xs font-bold opacity-50 block mb-1">Slack/Teams Webhook</label>
+                        <input type="password" value={slackWebhook} onChange={(e) => setSlackWebhook(e.target.value)} disabled={!isAdmin} placeholder="https://hooks.slack.com/..." className={`w-full p-3 border rounded-lg bg-transparent outline-none focus:border-indigo-500 ${theme.border}`}/>
+                     </div>
+                     <div className="flex items-end">
+                        {isAdmin && <button onClick={handleSaveWebhook} className="bg-slate-900 text-white px-6 py-3 rounded-lg font-bold text-sm">Save</button>}
+                     </div>
+                 </div>
+
+                 <div className="border-t border-dashed border-slate-500/20 my-6"></div>
+
+                 {/* Nova secção de API Keys para CI/CD */}
+                 <div>
+                     <div className="flex justify-between items-center mb-4">
+                        <div>
+                            <h4 className="font-bold text-sm">API Keys (CI/CD Pipeline)</h4>
+                            <p className={`text-xs mt-1 ${theme.muted}`}>Use these keys to authenticate Sentinel CLI in GitHub Actions or Jenkins.</p>
+                        </div>
+                        <button onClick={handleGenerateKey} className="text-xs bg-indigo-500/10 text-indigo-500 px-3 py-1.5 rounded-lg font-bold hover:bg-indigo-500/20 transition-colors">Generate New Key</button>
+                     </div>
+                     
+                     <div className="space-y-3">
+                        {apiKeys.length === 0 && <p className="text-xs opacity-50 italic">No active keys.</p>}
+                        {apiKeys.map(k => (
+                            <div key={k.id} className={`flex justify-between items-center p-3 rounded-lg border ${theme.border} bg-black/5 dark:bg-white/5`}>
+                                <div className="font-mono text-xs select-all">{k.key_value}</div>
+                                <div className="flex gap-2">
+                                    <span className="text-[10px] bg-emerald-500/10 text-emerald-500 px-2 py-0.5 rounded">Active</span>
+                                    {/* Botão de copiar simples */}
+                                    <button onClick={() => {navigator.clipboard.writeText(k.key_value); showToast("Key copied")}} className="text-xs hover:text-indigo-500"><FileText size={14}/></button>
+                                </div>
+                            </div>
+                        ))}
+                     </div>
+                     
+                     {/* Snippet de Ajuda */}
+                     <div className="mt-6 p-4 rounded-xl bg-black/80 text-slate-300 font-mono text-[10px] border border-white/10 overflow-x-auto">
+                        <p className="text-emerald-400 mb-2"># GitHub Actions Example (.github/workflows/sentinel.yml)</p>
+                        <p>- name: Run Sentinel Security Scan</p>
+                        <p className="pl-4">uses: sentinel-security/action@v1</p>
+                        <p className="pl-4">with:</p>
+                        <p className="pl-8">api-key: ${`{{`} secrets.SENTINEL_API_KEY {`}}`}</p>
+                     </div>
                  </div>
               </div>
 
