@@ -1,95 +1,76 @@
 import os
 import re
-import boto3
-from .sca import SCAScanner
-from .iac import IaCScanner
-from .compliance import get_compliance
+import yaml
+from .security import analyze_security, analyze_secrets  # Funções auxiliares
+from .compliance import check_compliance
+
+# Carregar regras
+RULES_PATH = os.path.join(os.path.dirname(__file__), "../rules.yaml")
 
 class Scanner:
     def __init__(self):
-        # Regras de Segredos (SAST)
-        self.regex_rules = [
-            {"id": "AWS_KEY", "name": "AWS Access Key", "pattern": r"(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}", "severity": "CRITICO"},
-            {"id": "STRIPE_KEY", "name": "Stripe Secret Key", "pattern": r"sk_live_[0-9a-zA-Z]{24}", "severity": "CRITICO"},
-            {"id": "DB_PASSWORD", "name": "Hardcoded Password", "pattern": r"(password|passwd|pwd)\s*=\s*['\"](\w+)['\"]", "severity": "ALTO"},
-            {"id": "PRIVATE_KEY", "name": "SSH Private Key", "pattern": r"-----BEGIN OPENSSH PRIVATE KEY-----", "severity": "CRITICO"},
-        ]
-        # Inicializar os sub-scanners
-        self.sca = SCAScanner()
-        self.iac = IaCScanner()
-
-    def validate_aws_key(self, key_id):
-        """Active Validation: Tenta usar a chave na AWS para ver se é real"""
-        try:
-            client = boto3.client('sts', aws_access_key_id=key_id, aws_secret_access_key='dummy_secret') 
-            return True 
-        except:
-            return False
-
-    def scan_file(self, file_path, policies=None):
-        issues = []
-        if not policies: policies = {"dockerScan": True, "activeValidation": False}
+        with open(RULES_PATH, "r") as f:
+            self.rules = yaml.safe_load(f)
         
-        filename = os.path.basename(file_path)
+        # Lista de pastas a ignorar
+        self.IGNORE_DIRS = {
+            '.git', '.svn', '.hg', '.idea', '.vscode', 
+            'node_modules', 'venv', '.venv', 'env', 
+            '__pycache__', 'dist', 'build', 'sentinel_uploads',
+            'migrations', 'tests'
+        }
 
-        try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
+        # Lista de ficheiros a ignorar (configurações do próprio Sentinel)
+        self.IGNORE_FILES = {
+            'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 
+            'composer.lock', 'Cargo.lock', '.DS_Store',
+            'docker-compose.yml', 'docker-compose.yaml', # Ignora o compose do sistema
+            '.env', '.env.local', '.env.example',       # Ignora variáveis de ambiente
+            'rules.yaml', 'requirements.txt'
+        }
 
-            # 1. SCA: Análise de Dependências (Node.js, Python)
-            if filename == 'package.json':
-                issues.extend(self.sca.scan_package_json(content, file_path))
-            elif filename == 'requirements.txt':
-                issues.extend(self.sca.scan_requirements_txt(content, file_path))
+    async def scan_directory(self, directory: str):
+        issues = []
+        
+        # Normalizar caminho
+        directory = os.path.abspath(directory)
 
-            # 2. IaC: Infraestrutura (Docker, Terraform)
-            if filename == 'Dockerfile' and policies.get('dockerScan'):
-                issues.extend(self.iac.scan_dockerfile(content, file_path))
-            elif filename.endswith('.tf'):
-                issues.extend(self.iac.scan_terraform(content, file_path))
-
-            # 3. SAST: Regex para Segredos no código
-            lines = content.splitlines()
-            for line_num, line in enumerate(lines, 1):
-                if len(line) > 500: continue # Ignorar linhas gigantes (minified code)
-                
-                for rule in self.regex_rules:
-                    if re.search(rule['pattern'], line):
-                        issue_name = rule['name']
-                        
-                        # Validação Ativa (Opcional - só se o cliente ativar na Policy)
-                        if rule['id'] == 'AWS_KEY' and policies.get('activeValidation'):
-                            # Nota: Na vida real, extrairíamos a chave exata aqui.
-                            issue_name += " [Active Check: UNVERIFIED]" 
-                        
-                        issues.append({
-                            "id": rule['id'],
-                            "file": file_path, 
-                            "line": line_num, 
-                            "name": issue_name,
-                            "severity": rule['severity'], 
-                            "snippet": line.strip()[:100]
-                        })
-
-        except Exception as e:
-            # Em produção, usaríamos logging.error
-            pass
+        for root, dirs, files in os.walk(directory):
+            # Filtrar diretórios ignorados
+            dirs[:] = [d for d in dirs if d not in self.IGNORE_DIRS]
             
-        # 4. Enriquecimento: Adicionar dados de Compliance (GDPR/ISO)
-        for issue in issues:
-            # Se o issue não tiver ID (vêm do SCA/IaC), usamos um genérico
-            issue_id = issue.get("id", "GENERIC_RISK")
-            issue["compliance"] = get_compliance(issue_id)
+            for file in files:
+                if file in self.IGNORE_FILES:
+                    continue
+
+                file_path = os.path.join(root, file)
+                relative_path = os.path.relpath(file_path, directory)
+                
+                # Ignorar ficheiros muito grandes (> 1MB) para performance
+                if os.path.getsize(file_path) > 1 * 1024 * 1024:
+                    continue
+
+                try:
+                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+                        
+                        # 1. Análise de Segurança (Regex)
+                        sec_issues = analyze_security(content, self.rules)
+                        for issue in sec_issues:
+                            issue.file = relative_path
+                            issues.append(issue)
+
+                        # 2. Análise de Segredos (Entropy/Regex específico)
+                        secret_issues = analyze_secrets(content)
+                        for issue in secret_issues:
+                            issue.file = relative_path
+                            issues.append(issue)
+
+                except Exception as e:
+                    print(f"Erro ao ler {relative_path}: {e}")
+
+        # 3. Análise de Compliance (GDPR, etc.)
+        compliance_issues = check_compliance(issues)
+        issues.extend(compliance_issues)
 
         return issues
-
-    def scan_directory(self, target_dir, policies=None):
-        all_issues = []
-        # Pastas a ignorar para ganhar velocidade
-        ignore = {'.git', 'venv', 'node_modules', '__pycache__', '.next', 'dist', 'build'}
-        
-        for root, dirs, files in os.walk(target_dir):
-            dirs[:] = [d for d in dirs if d not in ignore]
-            for file in files:
-                all_issues.extend(self.scan_file(os.path.join(root, file), policies))
-        return all_issues
