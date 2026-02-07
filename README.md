@@ -93,7 +93,7 @@ Existem duas formas de analisar código:
 #### Opção A: Upload Manual (Simples)
 Arrasta um ficheiro `.zip` contendo o código fonte para a área de upload no Dashboard. O resultado aparece na hora.
 
-#### Opção B: Scan Local via Terminal (Profissional)
+#### Opção B: Scan Local via Terminal
 Podes analisar código no teu computador sem fazer upload, usando o Docker CLI. Isto permite que o código nunca saia da tua máquina, mas o relatório é enviado para o Dashboard central.
 
 1.  Vai ao Dashboard > **Settings** e gera uma **API Key**.
@@ -123,7 +123,7 @@ No repositório de destino, cria o ficheiro .github/workflows/sentinel.yml.
 
 Adiciona a tua SENTINEL_API_KEY nos Secrets do repositório.
 
-Usa esta configuração:
+Usa esta configuração no teu sentinel.yml:
 
 ```yaml
 name: Sentinel Security Scan
@@ -151,25 +151,36 @@ jobs:
 Sentinel/
 ├── 📂 .github/             # Workflows para CI/CD (GitHub Actions)
 ├── 📂 backend/             # O "Cérebro" do sistema (Python/FastAPI)
-│   ├── 📂 core/            # Lógica principal de segurança
-│   │   ├── compliance.py   # Verificação GDPR/SOC2
-│   │   ├── scanner.py      # Motor de análise de Regex
-│   │   ├── tasks.py        # Tarefas assíncronas (Celery)
-│   │   └── ai.py           # Integração com Gemini AI
-│   ├── api.py              # Endpoints da API REST
-│   ├── main.py             # Script de entrada para CLI
-│   ├── rules.yaml          # Definições das vulnerabilidades
+│   ├── 📂 core/            # Módulos de Segurança e Lógica
+│   │   ├── celery_app.py   # Configuração do Worker Assíncrono
+│   │   ├── compliance.py   # Motor de Compliance (GDPR, ISO 27001, SOC2)
+│   │   ├── iac.py          # Scanner de Infraestrutura (Docker, K8s, Terraform)
+│   │   ├── integrations.py # Gestão de Webhooks e Jira
+│   │   ├── notifications.py# Sistema de envio de alertas
+│   │   ├── report.py       # Gerador de relatórios (JSON/PDF)
+│   │   ├── sca.py          # Análise de Dependências (Software Composition Analysis)
+│   │   ├── scanner.py      # Orquestrador Principal de Scans
+│   │   ├── security.py     # Utilitários de Criptografia e Definição de Issues
+│   │   └── tasks.py        # Definição das Tarefas Celery
+│   ├── admin.py            # Scripts de administração
+│   ├── api.py              # Endpoints da API REST (FastAPI)
+│   ├── main.py             # Script de entrada para CLI (Modo Terminal)
+│   ├── rules.yaml          # Base de dados de regras de deteção (Regex)
+│   ├── requirements.txt    # Dependências Python
 │   └── Dockerfile          # Configuração da imagem Backend
 ├── 📂 cli/                 # Ferramentas de linha de comandos
+│   ├── action.yaml         # Definição para GitHub Actions Marketplace
 │   └── sentinel.py         # Script standalone para scans rápidos
-├── 📂 frontend/            # O Dashboard (Next.js/React)
-│   ├── 📂 app/             # Páginas (Login, Dashboard, Settings)
-│   ├── 📂 lib/             # Cliente Supabase e utilitários
+├── 📂 frontend/            # O Dashboard (Next.js 15)
+│   ├── 📂 app/             # Páginas (Login, Dashboard, Settings, API)
+│   ├── 📂 lib/             # Cliente Supabase e funções utilitárias
+│   ├── 📂 public/          # Imagens e ícones estáticos
 │   └── Dockerfile          # Configuração da imagem Frontend
-├── 🐳 docker-compose.yml   # Orquestração de todos os serviços
-└── 📄 .env.example         # Exemplo das variáveis de ambiente necessárias
+├── 🐳 docker-compose.yml   # Orquestração de todos os serviços (App, Worker, Redis)
+├── 📄 .env.example         # Exemplo das variáveis de ambiente necessárias
+└── 📜 LICENSE.md           # Licença de uso e distribuição
 
-```
+```cd 
 
 ---
 
@@ -177,6 +188,6 @@ Sentinel/
 
 Desenvolvido com ❤️ e café por Miguel Ferreira
 
-GitHub: @miguelaopt (ou o teu user correto)
+GitHub: @miguelaopt
 
 Email: miguel.rf267@gmail.com
