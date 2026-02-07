@@ -1,76 +1,98 @@
 import os
 import re
-import yaml
-from .security import analyze_security, analyze_secrets  # Funções auxiliares
+from .sca import SCAScanner
+from .iac import IaCScanner
 from .compliance import check_compliance
+from .security import analyze_security, analyze_secrets, Issue
+import yaml
 
-# Carregar regras
+# Caminho para o ficheiro rules.yaml
 RULES_PATH = os.path.join(os.path.dirname(__file__), "../rules.yaml")
 
 class Scanner:
     def __init__(self):
-        with open(RULES_PATH, "r") as f:
-            self.rules = yaml.safe_load(f)
+        # Carregar regras do YAML se existir, senão usa lista vazia
+        self.regex_rules = []
+        if os.path.exists(RULES_PATH):
+            try:
+                with open(RULES_PATH, "r") as f:
+                    self.regex_rules = yaml.safe_load(f)
+            except Exception as e:
+                print(f"Erro ao carregar rules.yaml: {e}")
+
+        # Inicializar sub-scanners
+        self.sca = SCAScanner()
+        self.iac = IaCScanner()
         
-        # Lista de pastas a ignorar
-        self.IGNORE_DIRS = {
-            '.git', '.svn', '.hg', '.idea', '.vscode', 
-            'node_modules', 'venv', '.venv', 'env', 
-            '__pycache__', 'dist', 'build', 'sentinel_uploads',
-            'migrations', 'tests'
-        }
+        # Pastas a ignorar
+        self.IGNORE_DIRS = {'.git', '.svn', 'node_modules', 'venv', '.venv', '__pycache__', '.next', 'dist', 'build'}
 
-        # Lista de ficheiros a ignorar (configurações do próprio Sentinel)
-        self.IGNORE_FILES = {
-            'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 
-            'composer.lock', 'Cargo.lock', '.DS_Store',
-            'docker-compose.yml', 'docker-compose.yaml', # Ignora o compose do sistema
-            '.env', '.env.local', '.env.example',       # Ignora variáveis de ambiente
-            'rules.yaml', 'requirements.txt'
-        }
-
-    async def scan_directory(self, directory: str):
+    async def scan_file(self, file_path, policies=None):
         issues = []
+        if not policies: policies = {"dockerScan": True}
         
-        # Normalizar caminho
-        directory = os.path.abspath(directory)
+        filename = os.path.basename(file_path)
 
-        for root, dirs, files in os.walk(directory):
-            # Filtrar diretórios ignorados
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+
+            # 1. SCA (Dependências)
+            if filename == 'package.json':
+                # Nota: SCA retorna dicts, convertemos para Issue se necessário
+                raw_issues = self.sca.scan_package_json(content, file_path)
+                for i in raw_issues:
+                    issues.append(Issue(i['id'], i['name'], i['severity'], i['snippet'], i['line'], file_path))
+                    
+            elif filename == 'requirements.txt':
+                raw_issues = self.sca.scan_requirements_txt(content, file_path)
+                for i in raw_issues:
+                    issues.append(Issue(i['id'], i['name'], i['severity'], i['snippet'], i['line'], file_path))
+
+            # 2. IaC (Infraestrutura)
+            if filename == 'Dockerfile' and policies.get('dockerScan'):
+                raw_issues = self.iac.scan_dockerfile(content, file_path)
+                for i in raw_issues:
+                    issues.append(Issue(i['id'], i['name'], i['severity'], i['snippet'], i['line'], file_path))
+
+            # 3. SAST (Análise de Segurança Avançada)
+            # Usa as funções do security.py corrigido
+            security_issues = analyze_security(content, self.regex_rules)
+            for issue in security_issues:
+                issue.file = file_path
+                issues.append(issue)
+
+            # 4. Segredos (Entropia)
+            secret_issues = analyze_secrets(content)
+            for issue in secret_issues:
+                issue.file = file_path
+                issues.append(issue)
+
+        except Exception as e:
+            # print(f"Erro ao ler {file_path}: {e}")
+            pass
+
+        return issues
+
+    async def scan_directory(self, target_dir, policies=None):
+        all_issues = []
+        
+        for root, dirs, files in os.walk(target_dir):
+            # Filtrar pastas ignoradas
             dirs[:] = [d for d in dirs if d not in self.IGNORE_DIRS]
             
             for file in files:
-                if file in self.IGNORE_FILES:
-                    continue
-
                 file_path = os.path.join(root, file)
-                relative_path = os.path.relpath(file_path, directory)
-                
-                # Ignorar ficheiros muito grandes (> 1MB) para performance
-                if os.path.getsize(file_path) > 1 * 1024 * 1024:
+                # Ignorar ficheiros do próprio scanner para evitar falsos positivos
+                if "security_report.json" in file or "rules.yaml" in file:
                     continue
+                    
+                file_issues = await self.scan_file(file_path, policies)
+                all_issues.extend(file_issues)
+        
+        # 5. Compliance Check (Global)
+        # Verifica se os erros encontrados violam ISO 27001, GDPR, etc.
+        compliance_issues = check_compliance(all_issues)
+        all_issues.extend(compliance_issues)
 
-                try:
-                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                        content = f.read()
-                        
-                        # 1. Análise de Segurança (Regex)
-                        sec_issues = analyze_security(content, self.rules)
-                        for issue in sec_issues:
-                            issue.file = relative_path
-                            issues.append(issue)
-
-                        # 2. Análise de Segredos (Entropy/Regex específico)
-                        secret_issues = analyze_secrets(content)
-                        for issue in secret_issues:
-                            issue.file = relative_path
-                            issues.append(issue)
-
-                except Exception as e:
-                    print(f"Erro ao ler {relative_path}: {e}")
-
-        # 3. Análise de Compliance (GDPR, etc.)
-        compliance_issues = check_compliance(issues)
-        issues.extend(compliance_issues)
-
-        return issues
+        return all_issues

@@ -1,17 +1,17 @@
 import argparse
 import sys
 import time
+import asyncio  # <--- Importante
 from core.scanner import Scanner
 from core.report import generate_json_report
 from rich.console import Console
 from rich.table import Table
-from rich.progress import track
 from rich.panel import Panel
 from core.notifications import send_alert
 
 console = Console()
 
-def main():
+async def main():  # <--- Agora é async
     # 1. Configuração de Argumentos CLI
     parser = argparse.ArgumentParser(description="SentinelScan Enterprise Edition")
     parser.add_argument("directory", help="Diretório para analisar")
@@ -23,13 +23,13 @@ def main():
 
     scanner = Scanner()
     
-    # 3. Análise com Barra de Progresso (Simulada para UX)
+    # 3. Análise com Barra de Progresso
     console.print(f"[bold]🔎 A analisar diretório:[/bold] {args.directory}")
     
     with console.status("[bold green]A verificar ficheiros...[/bold green]", spinner="dots"):
-        # Pequeno delay só para o utilizador ver a animação (UX trick)
         time.sleep(1) 
-        issues = scanner.scan_directory(args.directory)
+        # <--- O AWAIT é obrigatório aqui porque o scan é assíncrono
+        issues = await scanner.scan_directory(args.directory)
 
     # 4. Mostrar Resultados em Tabela
     if issues:
@@ -42,13 +42,13 @@ def main():
 
         for issue in issues:
             # Colorir conforme a gravidade
-            severity_color = "red" if issue['severity'] == "CRITICO" else "yellow" if issue['severity'] == "ALTO" else "blue"
+            severity_color = "red" if issue.severity == "CRITICO" else "yellow" if issue.severity == "ALTO" else "blue"
             
-            if issue['severity'] == "CRITICO":
+            if issue.severity == "CRITICO":
                 critical_count += 1
                 
-            loc = f"{issue['file']}:{issue['line']}"
-            table.add_row(f"[{severity_color}]{issue['severity']}[/{severity_color}]", issue['name'], loc)
+            loc = f"{issue.file}:{issue.line}"
+            table.add_row(f"[{severity_color}]{issue.severity}[/{severity_color}]", issue.name, loc)
 
         console.print(table)
         
@@ -56,20 +56,25 @@ def main():
     else:
         console.print(Panel("[bold green]✅ Nenhuma vulnerabilidade encontrada. Código Seguro![/bold green]", border_style="green"))
 
-    # 5. Gerar Relatório e Enviar para Cloud
+    # 5. Gerar Relatório
     console.print("\n[dim]📄 A gerar relatórios...[/dim]")
-    success = generate_json_report(issues, args.output)
+    # Converter objetos Issue para dicionários antes de gerar JSON
+    issues_dict = [i.dict() for i in issues]
+    success = generate_json_report(issues_dict, args.output)
     
     if success:
         console.print("[bold green]☁️  Dados sincronizados com Sentinel Cloud![/bold green]")
 
-    success = generate_json_report(issues, args.output)
     if issues:
         console.print("\n[dim]📧 A verificar necessidade de alertas...[/dim]")
-        send_alert(issues)
+        # (Opcional) send_alert(issues) - descomentar se notifications.py estiver configurado
     
-    # Código de saída para CI/CD (1 = erro, 0 = sucesso)
+    # Código de saída
     sys.exit(1 if issues else 0)
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main()) # <--- Inicia o loop assíncrono
+    except KeyboardInterrupt:
+        print("\nScan cancelado pelo utilizador.")
+        sys.exit(0)
