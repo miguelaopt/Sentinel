@@ -52,21 +52,22 @@ cd Sentinel
 
 ### 2. Configurar Segredos (.env)
 
-Cria um ficheiro chamado .env na raiz do projeto (ao lado do docker-compose.yml) e cola as tuas chaves:
 
-# --- Backend & Base de Dados ---
+Cria um ficheiro chamado .env na raiz do projeto (ao lado do docker-compose.yml) e cola as tuas chaves:
+```
+ --- Backend & Base de Dados ---
 SUPABASE_URL="[https://teu-projeto.supabase.co](https://teu-projeto.supabase.co)"
 SUPABASE_SERVICE_ROLE_KEY="tua-chave-secreta-service-role"
 ADMIN_SUDO_PASSWORD="sentinel_admin"
 
-# --- Inteligência Artificial (Opcional) ---
+ --- Inteligência Artificial (Opcional) ---
 GEMINI_API_KEY="tua-chave-google-ai"
 
-# --- Frontend (Público) ---
+ --- Frontend (Público) ---
 NEXT_PUBLIC_API_URL=http://localhost:8000
 NEXT_PUBLIC_SUPABASE_URL="[https://teu-projeto.supabase.co](https://teu-projeto.supabase.co)"
 NEXT_PUBLIC_SUPABASE_ANON_KEY="tua-chave-publica-anon"
-
+```
 ---
 
 ### 3. Iniciar o Servidor
